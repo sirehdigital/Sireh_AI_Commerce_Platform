@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.output/
+
+# Coverage and test artifacts
+coverage/
+.nyc_output/
+
+# Runtime logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/
+
+# Framework and tooling caches
+.cache/
+.eslintcache
+.parcel-cache/
+.turbo/
+.vite/
+.vitest/
+.remix/
+.shopify/
+
+# Generated files
+generated/
+src/generated/
+prisma/generated/
+*.tsbuildinfo
+*.map
+
+# Temporary files
+tmp/
+temp/

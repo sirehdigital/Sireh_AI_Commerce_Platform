@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ShopifySession {
+  id          String   @id @default(cuid())
+  shopDomain  String   @unique
+  accessToken String
+  scopes      String
+  apiVersion  String
+  installedAt DateTime
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
+model ShopifyOAuthState {
+  id         String   @id @default(cuid())
+  stateHash  String   @unique
+  shopDomain String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([shopDomain])
+  @@index([expiresAt])
+}
+
+model ShopifyStore {
+  id               String    @id @default(cuid())
+  shopDomain       String    @unique
+  name             String
+  email            String?
+  currency         String
+  countryCode      String?
+  timezone         String?
+  planName         String?
+  primaryDomain    String?
+  shopifyCreatedAt DateTime?
+  syncedAt         DateTime
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model ShopifyProductSync {
+  id               String    @id @default(cuid())
+  shopDomain       String
+  shopifyProductId String
+  title            String
+  handle           String
+  status           String
+  vendor           String?
+  productType      String?
+  tags             String
+  publishedAt      DateTime?
+  rawPayload       Json?
+  syncedAt         DateTime
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([shopDomain, shopifyProductId])
+  @@index([shopDomain])
+}
+
+model ShopifyCollectionSync {
+  id                  String    @id @default(cuid())
+  shopDomain          String
+  shopifyCollectionId String
+  title               String
+  handle              String
+  collectionType      String
+  publishedAt         DateTime?
+  rawPayload          Json?
+  syncedAt            DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([shopDomain, shopifyCollectionId])
+  @@index([shopDomain])
+}
+
+model ShopifyInventorySync {
+  id              String    @id @default(cuid())
+  shopDomain      String
+  inventoryItemId String
+  locationId      String
+  available       Int?
+  updatedAtSource DateTime?
+  syncedAt        DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([shopDomain, inventoryItemId, locationId])
+  @@index([shopDomain])
+}
+
+model ShopifyLocationSync {
+  id                String   @id @default(cuid())
+  shopDomain        String
+  shopifyLocationId String
+  name              String
+  active            Boolean
+  countryCode       String?
+  provinceCode      String?
+  city              String?
+  address1          String?
+  syncedAt          DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shopDomain, shopifyLocationId])
+  @@index([shopDomain])
+}
+
+model ShopifyOrderSync {
+  id                String    @id @default(cuid())
+  shopDomain        String
+  shopifyOrderId    String
+  orderName         String
+  financialStatus   String?
+  fulfillmentStatus String?
+  currency          String
+  totalPrice        String
+  customerEmail     String?
+  processedAt       DateTime?
+  rawPayload        Json?
+  syncedAt          DateTime
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([shopDomain])
+}
+
+model ShopifyCustomerSync {
+  id                String   @id @default(cuid())
+  shopDomain        String
+  shopifyCustomerId String
+  email             String?
+  firstName         String?
+  lastName          String?
+  ordersCount       Int
+  totalSpent        String
+  currency          String?
+  rawPayload        Json?
+  syncedAt          DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shopDomain, shopifyCustomerId])
+  @@index([shopDomain])
+}
+
+model ShopifySyncRun {
+  id               String    @id @default(cuid())
+  shopDomain       String
+  status           String
+  startedAt        DateTime
+  completedAt      DateTime?
+  durationMs       Int?
+  productsCount    Int       @default(0)
+  collectionsCount Int       @default(0)
+  inventoryCount   Int       @default(0)
+  locationsCount   Int       @default(0)
+  ordersCount      Int       @default(0)
+  customersCount   Int       @default(0)
+  warnings         Json?
+  errorCode        String?
+  errorMessage     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([shopDomain])
+  @@index([shopDomain, status])
+}

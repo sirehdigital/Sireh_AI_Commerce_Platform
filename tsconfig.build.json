@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "generated",
+    "src/generated",
+    "prisma/generated",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "**/__mocks__/**",
+    "**/*.mock.ts",
+    "**/*.mock.tsx",
+    "**/*.stories.ts",
+    "**/*.stories.tsx",
+    "**/*.config.ts",
+    "**/*.config.tsx",
+    "**/*.config.js",
+    "**/*.config.mjs",
+    "**/*.config.cjs"
+  ]
+}

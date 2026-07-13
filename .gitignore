@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.output/
+public/build/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Caches
+.cache/
+.eslintcache
+.parcel-cache/
+.turbo/
+.vite/
+.vitest/
+.remix/
+.shopify/
+.npm/
+.pnpm-store/
+.yarn/
+
+# TypeScript
+*.tsbuildinfo
+
+# Generated artifacts
+generated/
+src/generated/
+prisma/generated/
+*.map
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
