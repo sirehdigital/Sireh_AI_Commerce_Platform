@@ -14,3 +14,5 @@ export { ScoreContentQualityUseCase } from "./score-content-quality.use-case.js"
 export type { ScoreContentQualityUseCaseRequest } from "./score-content-quality.use-case.js";
 export { LocalizeContentUseCase } from "./localize-content.use-case.js";
 export type { LocalizeContentUseCaseRequest } from "./localize-content.use-case.js";
+export { OrchestrateAIContentUseCase } from "./orchestrate-ai-content.use-case.js";
+export type { AIContentOrchestratorDependencies } from "./orchestrate-ai-content.use-case.js";

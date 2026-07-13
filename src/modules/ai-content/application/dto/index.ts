@@ -139,3 +139,4 @@ export type {
   VideoShot,
   VideoTiming,
 } from "./video-script.types.js";
+export * from "./ai-content-orchestration.types.js";

@@ -59,3 +59,5 @@ export type { VideoScriptPackageDraft } from "./video-script-package.factory.js"
 export { platformToChannel as videoPlatformToChannel } from "./video-script-package.factory.js";
 export { VideoShotListFactory } from "./video-shot-list.factory.js";
 export { VideoTimingFactory } from "./video-timing.factory.js";
+export { AIContentExecutionPlanFactory } from "./ai-content-execution-plan.factory.js";
+export { AIContentOrchestrationOptionsFactory } from "./ai-content-orchestration-options.factory.js";

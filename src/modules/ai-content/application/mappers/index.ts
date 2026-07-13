@@ -69,3 +69,5 @@ export type { LocalizedContentPackageSnapshot } from "./localized-content.mapper
 export { LocalizedContentToDomainMapper } from "./localized-content-to-domain.mapper.js";
 export { LocalizationMetadataMapper } from "./localization-metadata.mapper.js";
 export { VideoContentToEmailInputMapper } from "./video-content-to-email-input.mapper.js";
+export { AIContentOrchestrationMapper } from "./ai-content-orchestration.mapper.js";
+export type { AIContentScoringCandidate } from "./ai-content-orchestration.mapper.js";

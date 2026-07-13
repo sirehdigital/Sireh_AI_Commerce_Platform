@@ -8,7 +8,10 @@ import type {
 const FILLER_WORDS = new Set(["the", "and", "for", "with", "a", "an", "to", "of"]);
 
 export class SEOKeywordSetFactory {
-  public create(input: SEOContentGenerationInput, options: SEOContentGenerationOptions): SEOKeywordSet {
+  public create(
+    input: SEOContentGenerationInput,
+    options: SEOContentGenerationOptions,
+  ): SEOKeywordSet {
     const primary = this.primaryKeyword(input, options);
     const candidates = [
       ...(input.productKeywords ?? []),
@@ -28,6 +31,7 @@ export class SEOKeywordSetFactory {
       `${primary} ${this.intentPhrase(options.searchIntent)}`,
       ...(input.valueProposition === undefined ? [] : [`${primary} ${input.valueProposition}`]),
     ])
+      .filter((keyword) => !hasKeywordStuffing(keyword))
       .slice(0, options.maxLongTailKeywords)
       .map((keyword) => SEOKeyword.create(keyword));
     const semanticVariants = this.unique([
@@ -36,6 +40,7 @@ export class SEOKeywordSetFactory {
       ...(input.benefits ?? []).map((benefit) => `${primary} ${benefit}`),
     ])
       .filter((keyword) => keyword.toLowerCase() !== primary.toLowerCase())
+      .filter((keyword) => !hasKeywordStuffing(keyword))
       .slice(0, 6)
       .map((keyword) => SEOKeyword.create(keyword));
 
@@ -47,8 +52,14 @@ export class SEOKeywordSetFactory {
     };
   }
 
-  private primaryKeyword(input: SEOContentGenerationInput, options: SEOContentGenerationOptions): string {
-    if (options.preferredPrimaryKeyword !== undefined && options.preferredPrimaryKeyword.length > 0) {
+  private primaryKeyword(
+    input: SEOContentGenerationInput,
+    options: SEOContentGenerationOptions,
+  ): string {
+    if (
+      options.preferredPrimaryKeyword !== undefined &&
+      options.preferredPrimaryKeyword.length > 0
+    ) {
       return options.preferredPrimaryKeyword;
     }
 
@@ -99,4 +110,9 @@ export class SEOKeywordSetFactory {
       ),
     ];
   }
+}
+
+function hasKeywordStuffing(value: string): boolean {
+  const words = value.toLowerCase().split(/\s+/u);
+  return words.filter((word, index) => words.indexOf(word) !== index).length > 1;
 }

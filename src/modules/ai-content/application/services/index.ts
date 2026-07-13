@@ -24,3 +24,4 @@ export { VideoContentSafetyService } from "./video-content-safety.service.js";
 export type { VideoSafetyFinding } from "./video-content-safety.service.js";
 export { VideoPlatformCompatibilityService } from "./video-platform-compatibility.service.js";
 export { VideoTimingValidationService } from "./video-timing-validation.service.js";
+export { AIContentQualityGateService } from "./ai-content-quality-gate.service.js";

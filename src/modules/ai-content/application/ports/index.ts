@@ -6,3 +6,4 @@ export type { ProductContentGeneratorPort } from "./product-content-generator.po
 export type { SEOContentGeneratorPort } from "./seo-content-generator.port.js";
 export type { SocialMediaContentGeneratorPort } from "./social-media-content-generator.port.js";
 export type { VideoScriptGeneratorPort } from "./video-script-generator.port.js";
+export type { AIContentOrchestratorPort } from "./ai-content-orchestrator.port.js";
