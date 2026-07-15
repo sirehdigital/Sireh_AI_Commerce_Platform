@@ -12,11 +12,7 @@ import {
   type ShopifySessionRepository,
 } from "../../database/repositories/shopify-session.repository.js";
 import { shopifyConfig } from "./shopify.config.js";
-import type {
-  ShopifyAccessToken,
-  ShopifyApiVersion,
-  ShopifyShopDomain,
-} from "./shopify.types.js";
+import type { ShopifyAccessToken, ShopifyApiVersion, ShopifyShopDomain } from "./shopify.types.js";
 
 interface ShopifyClientOptions {
   shop: ShopifyShopDomain;
@@ -24,6 +20,17 @@ interface ShopifyClientOptions {
   apiVersion?: ShopifyApiVersion;
   requestTimeoutMs?: number;
   maxRetries?: number;
+}
+
+interface ShopifyGraphqlError {
+  readonly message: string;
+  readonly path?: readonly (string | number)[];
+  readonly extensions?: Readonly<Record<string, unknown>>;
+}
+
+interface ShopifyGraphqlResponse<TData> {
+  readonly data?: TData;
+  readonly errors?: readonly ShopifyGraphqlError[];
 }
 
 export class ShopifyClient {
@@ -99,6 +106,41 @@ export class ShopifyClient {
     return response.json() as Promise<T>;
   }
 
+  public async graphql<TData>(
+    query: string,
+    variables: Readonly<Record<string, unknown>> = {},
+  ): Promise<TData> {
+    const response = await this.request("graphql.json", {
+      method: "POST",
+      body: JSON.stringify({ query, variables }),
+    });
+    const payload = (await response.json()) as ShopifyGraphqlResponse<TData>;
+
+    if (payload.errors !== undefined && payload.errors.length > 0) {
+      throw AppError.badRequest(
+        "Shopify Admin GraphQL operation failed.",
+        {
+          errors: payload.errors.map((error) => ({
+            message: error.message,
+            ...(error.path === undefined ? {} : { path: error.path }),
+            ...(error.extensions === undefined ? {} : { extensions: error.extensions }),
+          })),
+        },
+        "SHOPIFY_GRAPHQL_ERROR",
+      );
+    }
+
+    if (payload.data === undefined) {
+      throw AppError.internal(
+        "Shopify Admin GraphQL response did not include data.",
+        undefined,
+        "SHOPIFY_GRAPHQL_EMPTY_RESPONSE",
+      );
+    }
+
+    return payload.data;
+  }
+
   public async getPaginated<T>(path: string, responseKey: string, pageLimit = 100): Promise<T[]> {
     const results: T[] = [];
     let nextPath: string | undefined = this.withLimit(path, pageLimit);
@@ -121,11 +163,14 @@ export class ShopifyClient {
     return results;
   }
 
-  private async request(path: string): Promise<Response> {
+  private async request(
+    path: string,
+    init?: Pick<RequestInit, "method" | "body">,
+  ): Promise<Response> {
     let attempt = 0;
 
     while (attempt <= this.maxRetries) {
-      const response = await this.fetchOnce(path);
+      const response = await this.fetchOnce(path, init);
 
       if (response.ok) {
         return response;
@@ -142,17 +187,26 @@ export class ShopifyClient {
     throw AppError.internal("Shopify Admin API request failed.");
   }
 
-  private async fetchOnce(path: string): Promise<Response> {
+  private async fetchOnce(
+    path: string,
+    init?: Pick<RequestInit, "method" | "body">,
+  ): Promise<Response> {
     const url = this.toAdminUrl(path);
 
-    return fetch(url, {
-      method: "GET",
+    const requestInit: RequestInit = {
+      method: init?.method ?? "GET",
       signal: AbortSignal.timeout(this.requestTimeoutMs),
       headers: {
         "X-Shopify-Access-Token": this.accessToken,
         "Content-Type": "application/json",
       },
-    });
+    };
+
+    if (init?.body !== undefined) {
+      requestInit.body = init.body;
+    }
+
+    return fetch(url, requestInit);
   }
 
   private toAdminUrl(path: string): string {

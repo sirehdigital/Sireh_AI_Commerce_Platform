@@ -12,20 +12,22 @@ describe("ShopifyClient", () => {
   });
 
   it("loads a saved access token and performs a successful Admin API request", async () => {
-    const fetchMock = vi.fn((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      expect(input).toBe("https://sirehshope.myshopify.com/admin/api/2025-01/shop.json");
-      expect(init?.headers).toMatchObject({
-        "X-Shopify-Access-Token": "test-access-token",
-        "Content-Type": "application/json",
-      });
+    const fetchMock = vi.fn(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        expect(input).toBe("https://sirehshope.myshopify.com/admin/api/2025-01/shop.json");
+        expect(init?.headers).toMatchObject({
+          "X-Shopify-Access-Token": "test-access-token",
+          "Content-Type": "application/json",
+        });
 
-      return Promise.resolve(
-        new Response(JSON.stringify({ shop: { name: "Sireh Shope" } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    });
+        return Promise.resolve(
+          new Response(JSON.stringify({ shop: { name: "Sireh Shope" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      },
+    );
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -107,6 +109,69 @@ describe("ShopifyClient", () => {
       shop: { name: "Sireh Shope" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("executes typed GraphQL Admin API requests", async () => {
+    const fetchMock = vi.fn(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        expect(input).toBe("https://sirehshope.myshopify.com/admin/api/2025-01/graphql.json");
+        expect(init?.method).toBe("POST");
+        const body = init?.body;
+        if (typeof body !== "string") {
+          throw new Error("Expected Shopify GraphQL request body to be a string.");
+        }
+        expect(JSON.parse(body)).toEqual({
+          query: "query ShopName { shop { name } }",
+          variables: {},
+        });
+
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: { shop: { name: "Sireh Shope" } } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ShopifyClient({
+      shop: TEST_SHOP,
+      accessToken: "test-access-token",
+      apiVersion: "2025-01",
+    });
+
+    await expect(
+      client.graphql<{ readonly shop: { readonly name: string } }>(
+        "query ShopName { shop { name } }",
+      ),
+    ).resolves.toEqual({ shop: { name: "Sireh Shope" } });
+  });
+
+  it("rejects top-level GraphQL errors without exposing credentials", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              errors: [{ message: "Access denied", extensions: { code: "ACCESS_DENIED" } }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+
+    const client = new ShopifyClient({
+      shop: TEST_SHOP,
+      accessToken: "test-access-token",
+      apiVersion: "2025-01",
+    });
+
+    await expect(client.graphql('query Product { product(id: "x") { id } }')).rejects.toThrow(
+      "Shopify Admin GraphQL operation failed",
+    );
   });
 });
 
