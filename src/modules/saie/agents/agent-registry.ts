@@ -1,9 +1,13 @@
+import { CONTENT_AGENT_DEFINITION } from "./content/index.js";
 import { MARKETING_AGENT_DEFINITION } from "./marketing/index.js";
 import { PRODUCT_AGENT_DEFINITION } from "./product/index.js";
 import type { SAIEAgentDefinition, SAIEAgentType } from "../types/index.js";
 
 const DEFAULT_AGENT_DEFINITIONS: readonly SAIEAgentDefinition[] = [
   PRODUCT_AGENT_DEFINITION,
+  {
+    ...CONTENT_AGENT_DEFINITION,
+  },
   {
     type: "BrandingAgent",
     name: "Branding Agent",

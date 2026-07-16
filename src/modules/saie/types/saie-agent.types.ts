@@ -1,5 +1,6 @@
 export const SAIE_AGENT_TYPES = [
   "ProductAgent",
+  "ContentAgent",
   "BrandingAgent",
   "CopyAgent",
   "SEOAgent",
@@ -14,6 +15,7 @@ export type SAIEAgentType = (typeof SAIE_AGENT_TYPES)[number];
 export type SAIEAgentCapability =
   | "product-analysis"
   | "product-risk-assessment"
+  | "content-planning"
   | "brand-positioning"
   | "copy-planning"
   | "seo-planning"

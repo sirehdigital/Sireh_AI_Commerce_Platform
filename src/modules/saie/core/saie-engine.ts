@@ -1,8 +1,10 @@
 import { ProductAdapterReadinessService } from "../adapters/index.js";
 import { SAIEAgentRegistry, createDefaultSAIEAgentRegistry } from "../agents/index.js";
+import { ContentAgent, ContentAgentInputValidationError } from "../agents/content/index.js";
 import { MarketingAgent, MarketingAgentInputValidationError } from "../agents/marketing/index.js";
 import { ProductAgent, ProductAgentInputValidationError } from "../agents/product/index.js";
 import type {
+  ContentAgentOutput,
   MarketingAgentOutput,
   ProductAgentOutput,
   ProductAdapterReadinessReport,
@@ -17,13 +19,14 @@ interface ArchitectureOnlyPlanResult extends Readonly<Record<string, unknown>> {
   readonly workflowStatus: "not-executed";
 }
 
-type SAIEPlanResult = ArchitectureOnlyPlanResult | ProductAgentOutput | MarketingAgentOutput;
+type SAIEPlanResult = ArchitectureOnlyPlanResult | ProductAgentOutput | MarketingAgentOutput | ContentAgentOutput;
 
 export interface SAIEEngineDependencies {
   readonly agentRegistry: SAIEAgentRegistry;
   readonly workflowEngine: SAIEWorkflowEngine;
   readonly productAgent: ProductAgent;
   readonly marketingAgent: MarketingAgent;
+  readonly contentAgent: ContentAgent;
   readonly productAdapterReadinessService: ProductAdapterReadinessService;
 }
 
@@ -32,6 +35,7 @@ export class SAIEEngine {
   private readonly workflowEngine: SAIEWorkflowEngine;
   private readonly productAgent: ProductAgent;
   private readonly marketingAgent: MarketingAgent;
+  private readonly contentAgent: ContentAgent;
   private readonly productAdapterReadinessService: ProductAdapterReadinessService;
 
   public constructor(dependencies: SAIEEngineDependencies = createDefaultDependencies()) {
@@ -39,6 +43,7 @@ export class SAIEEngine {
     this.workflowEngine = dependencies.workflowEngine;
     this.productAgent = dependencies.productAgent;
     this.marketingAgent = dependencies.marketingAgent;
+    this.contentAgent = dependencies.contentAgent;
     this.productAdapterReadinessService = dependencies.productAdapterReadinessService;
   }
 
@@ -72,6 +77,10 @@ export class SAIEEngine {
 
     if (request.targetAgent === "MarketingAgent") {
       return this.planMarketingAgent(request);
+    }
+
+    if (request.targetAgent === "ContentAgent") {
+      return this.planContentAgent(request);
     }
 
     return {
@@ -140,6 +149,30 @@ export class SAIEEngine {
       throw error;
     }
   }
+
+  private planContentAgent(request: SAIERequest): SAIEResponse<SAIEPlanResult> {
+    try {
+      return {
+        requestId: request.id,
+        context: request.context,
+        status: "planned",
+        result: this.contentAgent.planFromPayload(request.payload),
+        warnings: ["SAIE Content Agent generated a proposal only. No execution or external action was performed."],
+      };
+    } catch (error) {
+      if (error instanceof ContentAgentInputValidationError) {
+        return {
+          requestId: request.id,
+          context: request.context,
+          status: "rejected",
+          result: { workflowStatus: "not-executed" },
+          warnings: [error.message],
+        };
+      }
+
+      throw error;
+    }
+  }
 }
 
 const createDefaultDependencies = (): SAIEEngineDependencies => {
@@ -150,6 +183,7 @@ const createDefaultDependencies = (): SAIEEngineDependencies => {
     workflowEngine: new SAIEWorkflowEngine(agentRegistry),
     productAgent: new ProductAgent(),
     marketingAgent: new MarketingAgent(),
+    contentAgent: new ContentAgent(),
     productAdapterReadinessService: new ProductAdapterReadinessService(),
   };
 };
