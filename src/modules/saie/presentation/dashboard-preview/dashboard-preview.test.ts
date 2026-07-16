@@ -6,7 +6,7 @@ import { DashboardPreviewService } from "./dashboard-preview.service.js";
 import { renderDashboardPreviewHtml } from "./dashboard-preview.template.js";
 
 describe("DashboardPreviewService", () => {
-  it("creates a deterministic SAIE-01.12 landing dashboard view model", () => {
+  it("creates a deterministic SAIE-01.13 console preview view model", () => {
     const viewModel = new DashboardPreviewService().createViewModel({
       NODE_ENV: "production",
       SHOPIFY_API_KEY: "secret-key",
@@ -19,125 +19,139 @@ describe("DashboardPreviewService", () => {
       subtitle: "Enterprise AI Operating System",
       tagline: "Building the Future with AI",
       version: "v0.1.0 Alpha",
-      build: "SAIE-01.12",
+      build: "SAIE-01.13",
       environmentLabel: "Production",
-      systemOverview: {
-        engineStatus: "Operational",
-        safetyMode: "Human Approval Required",
-        executionMode: "Proposal Only",
-        shopifyIntegration: "Configured",
-        releaseChannel: "Alpha",
+      footer: {
+        company: "Sireh Digital",
+        poweredBy: "Powered by SAIE",
+        version: "v0.1.0 Alpha",
+        build: "Build SAIE-01.13",
       },
       executableActions: [],
     });
   });
 
-  it("represents hero metadata and deterministic KPI cards without live commercial metrics", () => {
+  it("includes deterministic executive operations summary counts without fake commercial metrics", () => {
     const viewModel = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" });
 
-    expect(viewModel.heroBadges).toEqual(["Operational", "Human Approval Required", "Proposal Only"]);
-    expect(viewModel.kpis.map((kpi) => kpi.label)).toEqual([
-      "Active Agents",
-      "Planning Agents",
-      "Operational Integrations",
-      "Planned Integrations",
-      "Safety Mode",
-      "Execution Mode",
+    expect(viewModel.operationsSummary.map((item) => item.label)).toEqual([
+      "Product proposals",
+      "Marketing proposals",
+      "Content proposals",
+      "Ready for review",
+      "Needs input",
+      "Blocked",
     ]);
-    expect(JSON.stringify(viewModel.kpis)).not.toMatch(/revenue|orders|customers/iu);
+    expect(JSON.stringify([...viewModel.kpis, ...viewModel.operationsSummary])).not.toMatch(
+      /revenue|orders|customers|sales/iu,
+    );
   });
 
-  it("represents the full agent capability matrix", () => {
-    const capabilities = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).agentCapabilities;
+  it("contains the proposal queue preview with deterministic statuses", () => {
+    const queue = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).proposalQueue;
 
-    expect(capabilities.map((agent) => agent.name)).toEqual([
-      "Product Agent",
-      "Marketing Agent",
-      "Content Agent",
-      "Executive Orchestrator",
-      "Analytics Agent",
-      "CEO Dashboard",
+    expect(queue.map((item) => item.status)).toEqual([
+      "READY_FOR_REVIEW",
+      "READY_FOR_REVIEW",
+      "NEEDS_INPUT",
+      "BLOCKED",
     ]);
-    expect(capabilities[0]).toMatchObject({
-      status: "Ready",
-      capability: "Product context planning",
-      currentMode: "Plan only",
-      readiness: "Ready",
-    });
+    expect(queue.every((item) => item.approvalRequirement === "Human review required")).toBe(true);
+    expect(queue.every((item) => item.lastPreviewUpdate.startsWith("Preview"))).toBe(true);
   });
 
-  it("does not mark planned agents as operational", () => {
-    const plannedAgents = new DashboardPreviewService()
-      .createViewModel({ NODE_ENV: "test" })
-      .agentCapabilities.filter((agent) => agent.status === "Planned");
+  it("contains deterministic agent activity preview entries", () => {
+    const activity = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).agentActivity;
 
-    expect(plannedAgents).toEqual([
+    expect(activity).toEqual([
       {
-        name: "Analytics Agent",
-        status: "Planned",
-        capability: "Performance intelligence",
-        currentMode: "Not connected",
-        readiness: "Planned",
-        tone: "planned",
+        agent: "Product Agent",
+        activityType: "Prepared product context",
+        status: "READY_FOR_REVIEW",
+        previewTimestamp: "Preview activity 01",
       },
       {
-        name: "CEO Dashboard",
-        status: "Planned",
-        capability: "Executive command view",
-        currentMode: "Not connected",
-        readiness: "Planned",
-        tone: "planned",
+        agent: "Marketing Agent",
+        activityType: "Generated campaign proposal",
+        status: "READY_FOR_REVIEW",
+        previewTimestamp: "Preview activity 02",
+      },
+      {
+        agent: "Content Agent",
+        activityType: "Prepared content proposal",
+        status: "NEEDS_INPUT",
+        previewTimestamp: "Preview activity 03",
+      },
+      {
+        agent: "Executive Orchestrator",
+        activityType: "Consolidated plan",
+        status: "BLOCKED",
+        previewTimestamp: "Preview activity 04",
       },
     ]);
   });
 
-  it("separates existing and planned integrations clearly", () => {
-    const groups = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).integrationGroups;
+  it("contains system health preview without marking limited modules as healthy", () => {
+    const health = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).systemHealth;
 
-    expect(groups.map((group) => group.name)).toEqual(["Available", "Existing", "Planned"]);
-    expect(groups.find((group) => group.name === "Existing")?.integrations).toEqual([
-      { name: "Shopify backend integration", status: "Existing integration", tone: "ready" },
+    expect(health.map((item) => item.component)).toEqual([
+      "Core Engine",
+      "Agent Registry",
+      "Workflow Engine",
+      "Controlled Execution",
+      "Shopify Integration",
+      "Dashboard Presentation",
     ]);
-    expect(groups.find((group) => group.name === "Planned")?.integrations.map((integration) => integration.name)).toEqual([
-      "AutoDS",
-      "Meta",
-      "TikTok",
-      "Amazon",
-      "eBay",
-      "Gmail",
-      "Canva",
-      "GitHub automation",
+    expect(health.find((item) => item.component === "Controlled Execution")?.status).toBe("LIMITED");
+    expect(health.find((item) => item.component === "Shopify Integration")?.status).toBe("LIMITED");
+  });
+
+  it("represents Alpha limitations accurately in the executive risk panel", () => {
+    const risks = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).executiveRisks;
+
+    expect(risks.map((risk) => risk.limitation)).toEqual([
+      "No durable persistence",
+      "No live approval queue",
+      "No RBAC",
+      "No tenant isolation",
+      "No background jobs",
+      "No live observability",
     ]);
   });
 
-  it("keeps the approval center read-only and proposal-only", () => {
+  it("keeps notification center read-only and proposal-only", () => {
     const viewModel = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" });
 
-    expect(viewModel.approvalCenter.items).toEqual([
-      "Human approval required",
-      "No pending live approvals",
-      "Approval execution unavailable in Alpha",
-      "No action buttons",
+    expect(viewModel.notifications.map((notification) => notification.title)).toEqual([
+      "Human approval is required",
+      "Execution remains disabled",
+      "Planned integrations are not connected",
+      "Shopify embedded configuration may require host/app URL update",
     ]);
     expect(viewModel.systemOverview.safetyMode).toBe("Human Approval Required");
     expect(viewModel.systemOverview.executionMode).toBe("Proposal Only");
     expect(viewModel.executableActions).toEqual([]);
   });
 
-  it("renders responsive semantic HTML without executable controls", () => {
+  it("renders responsive semantic HTML without action buttons, forms, or mutation controls", () => {
     const html = renderDashboardPreviewHtml(new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }));
 
     expect(html).toContain("<main>");
-    expect(html).toContain("<section aria-labelledby=\"matrix-title\">");
-    expect(html).toContain("<table>");
+    expect(html).toContain("<section id=\"proposal-queue\"");
+    expect(html).toContain("Proposal Queue Preview");
+    expect(html).toContain("Agent Activity Preview");
+    expect(html).toContain("System Health Preview");
+    expect(html).toContain("Executive Risk Panel");
     expect(html).toContain("@media (max-width: 1080px)");
-    expect(html).toContain("SAIE-01.12");
+    expect(html).toContain("href=\"#proposal-queue\"");
     expect(html).not.toContain("<script");
     expect(html).not.toContain("<button");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("type=\"submit\"");
+    expect(html).not.toContain("Approve");
     expect(html).not.toContain("Publish now");
     expect(html).not.toContain("Run workflow");
+    expect(html).not.toMatch(/revenue|orders|customers|sales/iu);
   });
 });
 
@@ -151,7 +165,7 @@ describe("dashboardPreviewRouter", () => {
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.text).toContain("<!doctype html>");
     expect(response.text).toContain("Sireh AI Engine");
-    expect(response.text).toContain("SAIE-01.12");
+    expect(response.text).toContain("SAIE-01.13");
   });
 
   it("keeps route-level security headers for a self-contained Shopify iframe preview", async () => {

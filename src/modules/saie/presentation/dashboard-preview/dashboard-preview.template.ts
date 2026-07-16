@@ -1,10 +1,16 @@
 import type {
   DashboardAgentCapability,
   DashboardAgentStatus,
+  DashboardAgentActivityItem,
   DashboardIntegrationGroup,
   DashboardIntegrationStatus,
   DashboardKpiCard,
+  DashboardNotificationItem,
+  DashboardOperationsSummaryItem,
+  DashboardProposalQueueItem,
   DashboardReleaseTimelineItem,
+  DashboardRiskItem,
+  DashboardSystemHealthItem,
   DashboardViewModel,
 } from "./dashboard-preview.types.js";
 
@@ -44,7 +50,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
         line-height: 1.5;
       }
-      a { color: inherit; }
+      a { color: inherit; text-decoration: none; }
       .layout {
         min-height: 100vh;
         display: grid;
@@ -79,14 +85,14 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         font-size: 24px;
         letter-spacing: 0;
       }
-      .muted, .brand p, .nav span, .eyebrow {
+      .muted, .brand p, .nav a, .eyebrow {
         color: var(--muted);
       }
       .nav {
         display: grid;
         gap: 10px;
       }
-      .nav span {
+      .nav a {
         border: 1px solid var(--line);
         border-radius: 10px;
         padding: 10px 12px;
@@ -138,7 +144,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         color: var(--muted);
         font-size: 17px;
       }
-      .badge-row, .kpi-grid, .card-grid, .integration-grid, .footer-grid {
+      .badge-row, .kpi-grid, .card-grid, .integration-grid, .footer-grid, .summary-grid, .notification-grid, .risk-grid {
         display: grid;
         gap: 14px;
       }
@@ -175,6 +181,9 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
       }
       .kpi-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .summary-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
       }
       .kpi {
         padding: 18px;
@@ -222,7 +231,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
       .status.disabled { color: var(--danger); border-color: rgba(255, 139, 139, 0.46); }
       .matrix {
         width: 100%;
-        overflow: hidden;
+        overflow-x: auto;
         border: 1px solid var(--line);
         border-radius: 14px;
         background: var(--panel);
@@ -273,6 +282,9 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         grid-template-columns: 1fr 1fr;
         gap: 16px;
       }
+      .notification-grid, .risk-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
       .panel {
         padding: 18px;
       }
@@ -320,7 +332,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
       }
       @media (max-width: 760px) {
         main, .hero { padding: 20px; }
-        .badge-row, .kpi-grid, .card-grid, .integration-grid, .split, .footer-grid, .nav {
+        .badge-row, .kpi-grid, .card-grid, .integration-grid, .split, .footer-grid, .nav, .summary-grid, .notification-grid, .risk-grid {
           grid-template-columns: 1fr;
         }
         .matrix { overflow-x: auto; }
@@ -337,13 +349,8 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           <p>${escapeHtml(viewModel.subtitle)}</p>
           <p class="muted">${escapeHtml(viewModel.version)} | ${escapeHtml(viewModel.build)}</p>
         </div>
-        <nav class="nav" aria-label="Landing dashboard sections">
-          <span>Executive Overview</span>
-          <span>Capability Matrix</span>
-          <span>Architecture</span>
-          <span>Approval Center</span>
-          <span>Integrations</span>
-          <span>Release Timeline</span>
+        <nav class="nav" aria-label="Console preview sections">
+          ${viewModel.navigation.map(renderNavigationItem).join("")}
         </nav>
       </aside>
       <main>
@@ -356,12 +363,20 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           </div>
         </header>
 
-        <section aria-labelledby="kpi-title">
+        <section id="overview" aria-labelledby="kpi-title">
           <div class="section-head">
             <h3 id="kpi-title">Executive KPI Cards</h3>
             <p>Deterministic preview values only.</p>
           </div>
           <div class="kpi-grid">${viewModel.kpis.map(renderKpi).join("")}</div>
+        </section>
+
+        <section aria-labelledby="operations-title">
+          <div class="section-head">
+            <h3 id="operations-title">Executive Operations Summary</h3>
+            <p>Preview counts, not live records.</p>
+          </div>
+          <div class="summary-grid">${viewModel.operationsSummary.map(renderOperationsSummary).join("")}</div>
         </section>
 
         <section aria-labelledby="agents-title">
@@ -372,7 +387,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           <div class="card-grid">${viewModel.agents.map(renderAgent).join("")}</div>
         </section>
 
-        <section aria-labelledby="matrix-title">
+        <section id="capability-matrix" aria-labelledby="matrix-title">
           <div class="section-head">
             <h3 id="matrix-title">Agent Capability Matrix</h3>
             <p>Status, capability, mode, and readiness.</p>
@@ -393,7 +408,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           </div>
         </section>
 
-        <section aria-labelledby="architecture-title">
+        <section id="architecture" aria-labelledby="architecture-title">
           <div class="section-head">
             <h3 id="architecture-title">Architecture Overview</h3>
             <p>Read-only planning path.</p>
@@ -401,7 +416,57 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           <div class="flow">${viewModel.architectureSteps.map(renderFlowStep).join("")}</div>
         </section>
 
-        <section aria-labelledby="approval-title">
+        <section id="proposal-queue" aria-labelledby="proposal-queue-title">
+          <div class="section-head">
+            <h3 id="proposal-queue-title">Proposal Queue Preview</h3>
+            <p>Read-only deterministic proposal states.</p>
+          </div>
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th>Proposal Type</th>
+                  <th>Originating Agent</th>
+                  <th>Status</th>
+                  <th>Readiness</th>
+                  <th>Approval Requirement</th>
+                  <th>Last Preview Update</th>
+                </tr>
+              </thead>
+              <tbody>${viewModel.proposalQueue.map(renderProposalQueueRow).join("")}</tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="agent-activity" aria-labelledby="activity-title">
+          <div class="section-head">
+            <h3 id="activity-title">Agent Activity Preview</h3>
+            <p>Preview activity labels, not live telemetry.</p>
+          </div>
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Activity Type</th>
+                  <th>Status</th>
+                  <th>Preview Timestamp</th>
+                </tr>
+              </thead>
+              <tbody>${viewModel.agentActivity.map(renderAgentActivityRow).join("")}</tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="system-health" aria-labelledby="health-title">
+          <div class="section-head">
+            <h3 id="health-title">System Health Preview</h3>
+            <p>Alpha status by component.</p>
+          </div>
+          <div class="card-grid">${viewModel.systemHealth.map(renderSystemHealth).join("")}</div>
+        </section>
+
+        <section id="approval-center" aria-labelledby="approval-title">
           <div class="section-head">
             <h3 id="approval-title">Approval Center Preview</h3>
             <p>No action buttons.</p>
@@ -418,7 +483,23 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           </div>
         </section>
 
-        <section aria-labelledby="integration-title">
+        <section id="notification-center" aria-labelledby="notification-title">
+          <div class="section-head">
+            <h3 id="notification-title">Notification Center Preview</h3>
+            <p>Read-only operational notices.</p>
+          </div>
+          <div class="notification-grid">${viewModel.notifications.map(renderNotification).join("")}</div>
+        </section>
+
+        <section aria-labelledby="risk-title">
+          <div class="section-head">
+            <h3 id="risk-title">Executive Risk Panel</h3>
+            <p>Current Alpha limitations.</p>
+          </div>
+          <div class="risk-grid">${viewModel.executiveRisks.map(renderRisk).join("")}</div>
+        </section>
+
+        <section id="integrations" aria-labelledby="integration-title">
           <div class="section-head">
             <h3 id="integration-title">Integration Landscape</h3>
             <p>Planned integrations are not connected.</p>
@@ -426,7 +507,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
           <div class="integration-grid">${viewModel.integrationGroups.map(renderIntegrationGroup).join("")}</div>
         </section>
 
-        <section aria-labelledby="timeline-title">
+        <section id="release-timeline" aria-labelledby="timeline-title">
           <div class="section-head">
             <h3 id="timeline-title">Release Timeline</h3>
             <p>SAIE Alpha delivery path.</p>
@@ -447,6 +528,21 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
   </body>
 </html>`;
 
+const navigationTargets: Readonly<Record<string, string>> = {
+  Overview: "#overview",
+  "Capability Matrix": "#capability-matrix",
+  Architecture: "#architecture",
+  "Proposal Queue": "#proposal-queue",
+  "Agent Activity": "#agent-activity",
+  "System Health": "#system-health",
+  "Approval Center": "#approval-center",
+  Integrations: "#integrations",
+  "Release Timeline": "#release-timeline",
+};
+
+const renderNavigationItem = (label: string): string =>
+  `<a href="${escapeHtml(navigationTargets[label] ?? "#overview")}">${escapeHtml(label)}</a>`;
+
 const renderHeroBadge = (value: string): string => `<span class="badge">${escapeHtml(value)}</span>`;
 
 const renderKpi = (kpi: DashboardKpiCard): string => `
@@ -454,6 +550,13 @@ const renderKpi = (kpi: DashboardKpiCard): string => `
     <span class="label">${escapeHtml(kpi.label)}</span>
     <span class="value">${escapeHtml(kpi.value)}</span>
     <span class="detail">${escapeHtml(kpi.detail)}</span>
+  </article>`;
+
+const renderOperationsSummary = (item: DashboardOperationsSummaryItem): string => `
+  <article class="kpi">
+    <span class="label">${escapeHtml(item.label)}</span>
+    <span class="value">${escapeHtml(item.value)}</span>
+    <span class="detail">${escapeHtml(item.detail)}</span>
   </article>`;
 
 const renderAgent = (agent: DashboardAgentStatus): string => `
@@ -474,6 +577,43 @@ const renderCapabilityRow = (agent: DashboardAgentCapability): string => `
 const renderFlowStep = (step: string): string => `<div class="flow-step">${escapeHtml(step)}</div>`;
 
 const renderListItem = (item: string): string => `<li>${escapeHtml(item)}</li>`;
+
+const renderProposalQueueRow = (item: DashboardProposalQueueItem): string => `
+  <tr>
+    <td><strong>${escapeHtml(item.proposalType)}</strong></td>
+    <td>${escapeHtml(item.originatingAgent)}</td>
+    <td><span class="status ${statusTone(item.status)}">${escapeHtml(item.status)}</span></td>
+    <td>${escapeHtml(item.readiness)}</td>
+    <td>${escapeHtml(item.approvalRequirement)}</td>
+    <td>${escapeHtml(item.lastPreviewUpdate)}</td>
+  </tr>`;
+
+const renderAgentActivityRow = (item: DashboardAgentActivityItem): string => `
+  <tr>
+    <td><strong>${escapeHtml(item.agent)}</strong></td>
+    <td>${escapeHtml(item.activityType)}</td>
+    <td><span class="status ${statusTone(item.status)}">${escapeHtml(item.status)}</span></td>
+    <td>${escapeHtml(item.previewTimestamp)}</td>
+  </tr>`;
+
+const renderSystemHealth = (item: DashboardSystemHealthItem): string => `
+  <article class="card">
+    <strong>${escapeHtml(item.component)}</strong>
+    <span class="status ${healthTone(item.status)}">${escapeHtml(item.status)}</span>
+    <p class="muted">${escapeHtml(item.note)}</p>
+  </article>`;
+
+const renderNotification = (item: DashboardNotificationItem): string => `
+  <article class="panel">
+    <h4>${escapeHtml(item.title)}</h4>
+    <p class="muted">${escapeHtml(item.detail)}</p>
+  </article>`;
+
+const renderRisk = (item: DashboardRiskItem): string => `
+  <article class="panel">
+    <h4>${escapeHtml(item.limitation)}</h4>
+    <p class="muted">${escapeHtml(item.impact)}</p>
+  </article>`;
 
 const renderIntegrationGroup = (group: DashboardIntegrationGroup): string => `
   <article class="panel">
@@ -496,6 +636,30 @@ const renderTimelineItem = (item: DashboardReleaseTimelineItem): string => `
     <strong>${escapeHtml(item.label)}</strong>
     <span class="status ${item.status === "Current" ? "ready" : "operational"}">${escapeHtml(item.status)}</span>
   </div>`;
+
+const statusTone = (status: string): DashboardAgentStatus["tone"] => {
+  if (status === "READY_FOR_REVIEW") {
+    return "ready";
+  }
+
+  if (status === "BLOCKED") {
+    return "disabled";
+  }
+
+  return "planned";
+};
+
+const healthTone = (status: string): DashboardAgentStatus["tone"] => {
+  if (status === "HEALTHY" || status === "READY") {
+    return "ready";
+  }
+
+  if (status === "LIMITED") {
+    return "planned";
+  }
+
+  return "planned";
+};
 
 const escapeHtml = (value: string): string =>
   value

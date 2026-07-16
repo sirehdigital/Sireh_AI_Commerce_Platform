@@ -12,6 +12,48 @@ export interface DashboardKpiCard {
   readonly detail: string;
 }
 
+export interface DashboardOperationsSummaryItem {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+}
+
+export type DashboardProposalStatus = "READY_FOR_REVIEW" | "NEEDS_INPUT" | "BLOCKED";
+
+export interface DashboardProposalQueueItem {
+  readonly proposalType: string;
+  readonly originatingAgent: string;
+  readonly status: DashboardProposalStatus;
+  readonly readiness: string;
+  readonly approvalRequirement: string;
+  readonly lastPreviewUpdate: string;
+}
+
+export interface DashboardAgentActivityItem {
+  readonly agent: string;
+  readonly activityType: string;
+  readonly status: DashboardProposalStatus;
+  readonly previewTimestamp: string;
+}
+
+export type DashboardSystemHealthStatus = "HEALTHY" | "READY" | "LIMITED" | "PLANNED";
+
+export interface DashboardSystemHealthItem {
+  readonly component: string;
+  readonly status: DashboardSystemHealthStatus;
+  readonly note: string;
+}
+
+export interface DashboardNotificationItem {
+  readonly title: string;
+  readonly detail: string;
+}
+
+export interface DashboardRiskItem {
+  readonly limitation: string;
+  readonly impact: string;
+}
+
 export interface DashboardAgentCapability {
   readonly name: string;
   readonly status: string;
@@ -47,7 +89,7 @@ export interface DashboardViewModel {
   readonly subtitle: "Enterprise AI Operating System";
   readonly tagline: "Building the Future with AI";
   readonly version: "v0.1.0 Alpha";
-  readonly build: "SAIE-01.12";
+  readonly build: "SAIE-01.13";
   readonly environmentLabel: string;
   readonly systemOverview: {
     readonly engineStatus: "Operational";
@@ -57,7 +99,14 @@ export interface DashboardViewModel {
     readonly releaseChannel: "Alpha";
   };
   readonly heroBadges: readonly string[];
+  readonly navigation: readonly string[];
   readonly kpis: readonly DashboardKpiCard[];
+  readonly operationsSummary: readonly DashboardOperationsSummaryItem[];
+  readonly proposalQueue: readonly DashboardProposalQueueItem[];
+  readonly agentActivity: readonly DashboardAgentActivityItem[];
+  readonly systemHealth: readonly DashboardSystemHealthItem[];
+  readonly notifications: readonly DashboardNotificationItem[];
+  readonly executiveRisks: readonly DashboardRiskItem[];
   readonly agents: readonly DashboardAgentStatus[];
   readonly agentCapabilities: readonly DashboardAgentCapability[];
   readonly workflowSteps: readonly string[];
@@ -71,7 +120,7 @@ export interface DashboardViewModel {
     readonly company: "Sireh Digital";
     readonly poweredBy: "Powered by SAIE";
     readonly version: "v0.1.0 Alpha";
-    readonly build: "Build SAIE-01.12";
+    readonly build: "Build SAIE-01.13";
   };
   readonly executableActions: readonly [];
 }
