@@ -1,3 +1,4 @@
+import { MARKETING_AGENT_DEFINITION } from "./marketing/index.js";
 import { PRODUCT_AGENT_DEFINITION } from "./product/index.js";
 import type { SAIEAgentDefinition, SAIEAgentType } from "../types/index.js";
 
@@ -32,11 +33,7 @@ const DEFAULT_AGENT_DEFINITIONS: readonly SAIEAgentDefinition[] = [
     implementationStatus: "registry-only",
   },
   {
-    type: "MarketingAgent",
-    name: "Marketing Agent",
-    description: "Coordinates future marketing workflows while remaining provider-neutral.",
-    capabilities: ["marketing-planning"],
-    implementationStatus: "registry-only",
+    ...MARKETING_AGENT_DEFINITION,
   },
   {
     type: "AnalyticsAgent",
