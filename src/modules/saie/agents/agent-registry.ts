@@ -1,6 +1,7 @@
 import { CONTENT_AGENT_DEFINITION } from "./content/index.js";
 import { MARKETING_AGENT_DEFINITION } from "./marketing/index.js";
 import { PRODUCT_AGENT_DEFINITION } from "./product/index.js";
+import { EXECUTIVE_ORCHESTRATOR_DEFINITION } from "../orchestration/index.js";
 import type { SAIEAgentDefinition, SAIEAgentType } from "../types/index.js";
 
 const DEFAULT_AGENT_DEFINITIONS: readonly SAIEAgentDefinition[] = [
@@ -47,11 +48,7 @@ const DEFAULT_AGENT_DEFINITIONS: readonly SAIEAgentDefinition[] = [
     implementationStatus: "registry-only",
   },
   {
-    type: "CEOAgent",
-    name: "CEO Agent",
-    description: "Coordinates future executive orchestration across registered SAIE agents.",
-    capabilities: ["executive-orchestration"],
-    implementationStatus: "registry-only",
+    ...EXECUTIVE_ORCHESTRATOR_DEFINITION,
   },
 ];
 
