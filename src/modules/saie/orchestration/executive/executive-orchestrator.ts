@@ -11,9 +11,13 @@ import type {
 import { createExecutiveRecommendedSequence } from "./executive-orchestrator.steps.js";
 import type {
   ExecutiveDecision,
+  ExecutiveHealthSummary,
+  ExecutiveMetrics,
   ExecutiveOrchestratorInput,
+  ExecutiveOutputValidation,
   ExecutivePlan,
   ExecutiveProductOverview,
+  ExecutiveReleaseSummary,
   ExecutiveRisk,
 } from "./executive-orchestrator.types.js";
 
@@ -48,15 +52,23 @@ export class ExecutiveOrchestrator {
     try {
       const marketing = this.ports.marketingPlanning.plan(toMarketingInput(input), generatedAt);
       const content = this.ports.contentPlanning.plan(toContentInput(input, marketing), generatedAt);
+      const recommendedSequence = createExecutiveRecommendedSequence();
+      const crossAgentRisks = createCrossAgentRisks(marketing, content);
+      const outputValidation = createOutputValidation({
+        productOverview,
+        marketingProposalPresent: true,
+        contentProposalPresent: true,
+        recommendedStepCount: recommendedSequence.length,
+      });
 
       return {
         executiveSummary: `${input.brand.name} can review a proposal-only sequence for ${input.product.title} across product, marketing, and content planning.`,
         productOverview,
         marketingProposal: marketing.proposal,
         contentProposal: content.proposal,
-        recommendedSequence: createExecutiveRecommendedSequence(),
+        recommendedSequence,
         keyDecisions: createKeyDecisions(input),
-        crossAgentRisks: createCrossAgentRisks(marketing, content),
+        crossAgentRisks,
         unresolvedQuestions: [],
         readinessStatus: "READY_FOR_REVIEW",
         approvalRequired: true,
@@ -65,6 +77,16 @@ export class ExecutiveOrchestrator {
         executableActions: [],
         generatedAt: generatedAtIso,
         orchestratorVersion: EXECUTIVE_ORCHESTRATOR_VERSION,
+        healthSummary: createHealthSummary("READY_FOR_REVIEW", outputValidation, []),
+        metrics: createMetrics({
+          agentProposalCount: 2,
+          recommendedStepCount: recommendedSequence.length,
+          riskCount: crossAgentRisks.length,
+          unresolvedQuestionCount: 0,
+        }),
+        engineMetadata: createEngineMetadata(),
+        releaseSummary: createReleaseSummary(),
+        outputValidation,
       };
     } catch (error) {
       return this.createBlockedPlan(input, productOverview, generatedAtIso, error);
@@ -91,14 +113,23 @@ export class ExecutiveOrchestrator {
     unresolvedQuestions: readonly string[],
     generatedAt: string,
   ): ExecutivePlan {
+    const recommendedSequence = createExecutiveRecommendedSequence();
+    const crossAgentRisks = createBaseRisks();
+    const outputValidation = createOutputValidation({
+      productOverview,
+      marketingProposalPresent: false,
+      contentProposalPresent: false,
+      recommendedStepCount: recommendedSequence.length,
+    });
+
     return {
       executiveSummary: "Executive orchestration needs more prepared context before agent proposals can be produced safely.",
       productOverview,
       marketingProposal: null,
       contentProposal: null,
-      recommendedSequence: createExecutiveRecommendedSequence(),
+      recommendedSequence,
       keyDecisions: createNeedsInputDecisions(input),
-      crossAgentRisks: createBaseRisks(),
+      crossAgentRisks,
       unresolvedQuestions,
       readinessStatus: "NEEDS_INPUT",
       approvalRequired: true,
@@ -107,6 +138,16 @@ export class ExecutiveOrchestrator {
       executableActions: [],
       generatedAt,
       orchestratorVersion: EXECUTIVE_ORCHESTRATOR_VERSION,
+      healthSummary: createHealthSummary("NEEDS_INPUT", outputValidation, unresolvedQuestions),
+      metrics: createMetrics({
+        agentProposalCount: 0,
+        recommendedStepCount: recommendedSequence.length,
+        riskCount: crossAgentRisks.length,
+        unresolvedQuestionCount: unresolvedQuestions.length,
+      }),
+      engineMetadata: createEngineMetadata(),
+      releaseSummary: createReleaseSummary(),
+      outputValidation,
     };
   }
 
@@ -117,22 +158,31 @@ export class ExecutiveOrchestrator {
     error: unknown,
   ): ExecutivePlan {
     const reason = error instanceof Error ? error.message : "A planning agent could not produce a safe proposal.";
+    const recommendedSequence = createExecutiveRecommendedSequence();
+    const crossAgentRisks = [
+      ...createBaseRisks(),
+      {
+        area: "Agent planning",
+        caution: reason,
+      },
+    ];
+    const unresolvedQuestions = ["Which upstream planning input or agent adapter should be corrected before retrying?"];
+    const outputValidation = createOutputValidation({
+      productOverview,
+      marketingProposalPresent: false,
+      contentProposalPresent: false,
+      recommendedStepCount: recommendedSequence.length,
+    });
 
     return {
       executiveSummary: "Executive orchestration was blocked before a complete proposal could be produced.",
       productOverview,
       marketingProposal: null,
       contentProposal: null,
-      recommendedSequence: createExecutiveRecommendedSequence(),
+      recommendedSequence,
       keyDecisions: createNeedsInputDecisions(input),
-      crossAgentRisks: [
-        ...createBaseRisks(),
-        {
-          area: "Agent planning",
-          caution: reason,
-        },
-      ],
-      unresolvedQuestions: ["Which upstream planning input or agent adapter should be corrected before retrying?"],
+      crossAgentRisks,
+      unresolvedQuestions,
       readinessStatus: "BLOCKED",
       approvalRequired: true,
       proposalOnly: true,
@@ -140,6 +190,16 @@ export class ExecutiveOrchestrator {
       executableActions: [],
       generatedAt,
       orchestratorVersion: EXECUTIVE_ORCHESTRATOR_VERSION,
+      healthSummary: createHealthSummary("BLOCKED", outputValidation, unresolvedQuestions),
+      metrics: createMetrics({
+        agentProposalCount: 0,
+        recommendedStepCount: recommendedSequence.length,
+        riskCount: crossAgentRisks.length,
+        unresolvedQuestionCount: unresolvedQuestions.length,
+      }),
+      engineMetadata: createEngineMetadata(),
+      releaseSummary: createReleaseSummary(),
+      outputValidation,
     };
   }
 }
@@ -307,6 +367,103 @@ const createBaseRisks = (): readonly ExecutiveRisk[] => [
     caution: "Human approval is required before any publish, post, email, ad, Shopify, or marketplace action.",
   },
 ];
+
+const createOutputValidation = (input: {
+  readonly productOverview: ExecutiveProductOverview;
+  readonly marketingProposalPresent: boolean;
+  readonly contentProposalPresent: boolean;
+  readonly recommendedStepCount: number;
+}): ExecutiveOutputValidation => {
+  const productOverviewPresent =
+    input.productOverview.title.trim().length > 0 &&
+    input.productOverview.category.trim().length > 0 &&
+    input.productOverview.benefits.length > 0;
+  const sequencePresent = input.recommendedStepCount > 0;
+  const missingOutputs = [
+    ...(productOverviewPresent ? [] : ["productOverview"]),
+    ...(input.marketingProposalPresent ? [] : ["marketingProposal"]),
+    ...(input.contentProposalPresent ? [] : ["contentProposal"]),
+    ...(sequencePresent ? [] : ["recommendedSequence"]),
+  ];
+
+  return {
+    productOverviewPresent,
+    marketingProposalPresent: input.marketingProposalPresent,
+    contentProposalPresent: input.contentProposalPresent,
+    sequencePresent,
+    safetyFlagsValid: true,
+    missingOutputs,
+  };
+};
+
+const createHealthSummary = (
+  readinessStatus: ExecutivePlan["readinessStatus"],
+  validation: ExecutiveOutputValidation,
+  unresolvedQuestions: readonly string[],
+): ExecutiveHealthSummary => {
+  if (readinessStatus === "BLOCKED") {
+    return {
+      status: "BLOCKED",
+      planningOutputsValidated: false,
+      approvalGateIntact: true,
+      executionDisabled: true,
+      notes: ["Executive orchestration is blocked before release review."],
+    };
+  }
+
+  if (readinessStatus === "NEEDS_INPUT") {
+    return {
+      status: "ATTENTION_REQUIRED",
+      planningOutputsValidated: false,
+      approvalGateIntact: true,
+      executionDisabled: true,
+      notes: [
+        `Executive orchestration requires ${unresolvedQuestions.length.toString()} input clarification(s).`,
+      ],
+    };
+  }
+
+  return {
+    status: "HEALTHY",
+    planningOutputsValidated: validation.missingOutputs.length === 0,
+    approvalGateIntact: true,
+    executionDisabled: true,
+    notes: ["All required proposal outputs are present for human review."],
+  };
+};
+
+const createMetrics = (input: {
+  readonly agentProposalCount: number;
+  readonly recommendedStepCount: number;
+  readonly riskCount: number;
+  readonly unresolvedQuestionCount: number;
+}): ExecutiveMetrics => ({
+  agentProposalCount: input.agentProposalCount,
+  recommendedStepCount: input.recommendedStepCount,
+  riskCount: input.riskCount,
+  unresolvedQuestionCount: input.unresolvedQuestionCount,
+  executableActionCount: 0,
+});
+
+const createEngineMetadata = () => ({
+  engineName: "SAIE Executive Orchestrator",
+  engineVersion: "0.1.0-alpha",
+  buildSprint: "SAIE-01.10.1",
+  orchestratorVersion: EXECUTIVE_ORCHESTRATOR_VERSION,
+  deterministic: true,
+}) as const;
+
+const createReleaseSummary = (): ExecutiveReleaseSummary => ({
+  releaseName: "SAIE v0.1.0 Alpha",
+  stabilizationSprint: "SAIE-01.10.1",
+  proposalOnly: true,
+  humanApprovalRequired: true,
+  externalExecutionEnabled: false,
+  notes: [
+    "Executive Orchestrator stabilization metadata is included.",
+    "Release remains proposal-only and approval-gated.",
+  ],
+});
 
 const isProductAgentOutput = (value: unknown): value is ProductAgentOutput => {
   if (typeof value !== "object" || value === null) {

@@ -8,6 +8,7 @@
 
 import { Router } from "express";
 import { productWriterRouter } from "../ai/product-writer/product-writer.routes.js";
+import { dashboardPreviewRouter } from "../modules/saie/presentation/index.js";
 
 export const appRouter = Router();
 
@@ -20,4 +21,4 @@ appRouter.get("/", (_req, res) => {
 });
 
 appRouter.use("/api/v1/product", productWriterRouter);
-
+appRouter.use("/api/saie/dashboard", dashboardPreviewRouter);

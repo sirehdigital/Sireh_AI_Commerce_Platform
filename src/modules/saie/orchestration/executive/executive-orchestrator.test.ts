@@ -34,6 +34,42 @@ describe("ExecutiveOrchestrator", () => {
       executableActions: [],
       generatedAt: "2026-07-16T00:00:00.000Z",
       orchestratorVersion: "SAIE-01.10",
+      healthSummary: {
+        status: "HEALTHY",
+        planningOutputsValidated: true,
+        approvalGateIntact: true,
+        executionDisabled: true,
+        notes: ["All required proposal outputs are present for human review."],
+      },
+      metrics: {
+        agentProposalCount: 2,
+        recommendedStepCount: 4,
+        riskCount: 4,
+        unresolvedQuestionCount: 0,
+        executableActionCount: 0,
+      },
+      engineMetadata: {
+        engineName: "SAIE Executive Orchestrator",
+        engineVersion: "0.1.0-alpha",
+        buildSprint: "SAIE-01.10.1",
+        orchestratorVersion: "SAIE-01.10",
+        deterministic: true,
+      },
+      releaseSummary: {
+        releaseName: "SAIE v0.1.0 Alpha",
+        stabilizationSprint: "SAIE-01.10.1",
+        proposalOnly: true,
+        humanApprovalRequired: true,
+        externalExecutionEnabled: false,
+      },
+      outputValidation: {
+        productOverviewPresent: true,
+        marketingProposalPresent: true,
+        contentProposalPresent: true,
+        sequencePresent: true,
+        safetyFlagsValid: true,
+        missingOutputs: [],
+      },
     });
     expect(plan.unresolvedQuestions).toEqual([]);
   });
@@ -98,6 +134,26 @@ describe("ExecutiveOrchestrator", () => {
     expect(plan.readinessStatus).toBe("NEEDS_INPUT");
     expect(plan.marketingProposal).toBeNull();
     expect(plan.contentProposal).toBeNull();
+    expect(plan.healthSummary).toMatchObject({
+      status: "ATTENTION_REQUIRED",
+      planningOutputsValidated: false,
+      approvalGateIntact: true,
+      executionDisabled: true,
+    });
+    expect(plan.metrics).toMatchObject({
+      agentProposalCount: 0,
+      recommendedStepCount: 4,
+      unresolvedQuestionCount: 6,
+      executableActionCount: 0,
+    });
+    expect(plan.outputValidation).toMatchObject({
+      productOverviewPresent: false,
+      marketingProposalPresent: false,
+      contentProposalPresent: false,
+      sequencePresent: true,
+      safetyFlagsValid: true,
+      missingOutputs: ["productOverview", "marketingProposal", "contentProposal"],
+    });
     expect(plan.unresolvedQuestions).toEqual([
       "What is the product title?",
       "What is the brand name?",
@@ -118,6 +174,19 @@ describe("ExecutiveOrchestrator", () => {
     }).plan(buildExecutiveInput(), FIXED_DATE);
 
     expect(plan.readinessStatus).toBe("BLOCKED");
+    expect(plan.healthSummary).toMatchObject({
+      status: "BLOCKED",
+      planningOutputsValidated: false,
+      approvalGateIntact: true,
+      executionDisabled: true,
+    });
+    expect(plan.metrics).toMatchObject({
+      agentProposalCount: 0,
+      recommendedStepCount: 4,
+      riskCount: 3,
+      unresolvedQuestionCount: 1,
+      executableActionCount: 0,
+    });
     expect(plan.crossAgentRisks).toContainEqual({
       area: "Agent planning",
       caution: "Marketing planning adapter failed safely.",

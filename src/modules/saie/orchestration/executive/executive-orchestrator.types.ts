@@ -56,6 +56,48 @@ export interface ExecutiveRisk {
   readonly caution: string;
 }
 
+export interface ExecutiveHealthSummary {
+  readonly status: "HEALTHY" | "ATTENTION_REQUIRED" | "BLOCKED";
+  readonly planningOutputsValidated: boolean;
+  readonly approvalGateIntact: true;
+  readonly executionDisabled: true;
+  readonly notes: readonly string[];
+}
+
+export interface ExecutiveMetrics {
+  readonly agentProposalCount: number;
+  readonly recommendedStepCount: number;
+  readonly riskCount: number;
+  readonly unresolvedQuestionCount: number;
+  readonly executableActionCount: 0;
+}
+
+export interface ExecutiveEngineMetadata {
+  readonly engineName: "SAIE Executive Orchestrator";
+  readonly engineVersion: "0.1.0-alpha";
+  readonly buildSprint: "SAIE-01.10.1";
+  readonly orchestratorVersion: "SAIE-01.10";
+  readonly deterministic: true;
+}
+
+export interface ExecutiveReleaseSummary {
+  readonly releaseName: "SAIE v0.1.0 Alpha";
+  readonly stabilizationSprint: "SAIE-01.10.1";
+  readonly proposalOnly: true;
+  readonly humanApprovalRequired: true;
+  readonly externalExecutionEnabled: false;
+  readonly notes: readonly string[];
+}
+
+export interface ExecutiveOutputValidation {
+  readonly productOverviewPresent: boolean;
+  readonly marketingProposalPresent: boolean;
+  readonly contentProposalPresent: boolean;
+  readonly sequencePresent: boolean;
+  readonly safetyFlagsValid: boolean;
+  readonly missingOutputs: readonly string[];
+}
+
 export interface ExecutivePlan extends Readonly<Record<string, unknown>> {
   readonly executiveSummary: string;
   readonly productOverview: ExecutiveProductOverview;
@@ -72,6 +114,11 @@ export interface ExecutivePlan extends Readonly<Record<string, unknown>> {
   readonly executableActions: readonly [];
   readonly generatedAt: string;
   readonly orchestratorVersion: "SAIE-01.10";
+  readonly healthSummary: ExecutiveHealthSummary;
+  readonly metrics: ExecutiveMetrics;
+  readonly engineMetadata: ExecutiveEngineMetadata;
+  readonly releaseSummary: ExecutiveReleaseSummary;
+  readonly outputValidation: ExecutiveOutputValidation;
 }
 
 export class ExecutiveOrchestratorInputValidationError extends Error {
