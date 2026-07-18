@@ -70,8 +70,21 @@ export async function completeAuth(
 ): Promise<ShopifySession> {
   const { shop, code, state, hmac } = query;
   const normalizedShop = normalizeShop(shop);
-  const storedState = await getOAuthState(state);
+
+  if (!isValidShopDomain(normalizedShop)) {
+    throw AppError.badRequest("Invalid shop domain provided.");
+  }
+
+  if (typeof state !== "string" || state.trim().length === 0) {
+    throw AppError.forbidden("Invalid state. OAuth request cannot be verified.");
+  }
+
+  if (typeof hmac !== "string" || hmac.trim().length === 0) {
+    throw AppError.forbidden("Invalid HMAC. Request could not be authenticated.");
+  }
+
   const stateHash = hashOAuthState(state);
+  const storedState = await getOAuthState(state);
 
   console.log("Shopify OAuth state lookup", {
     processPid: process.pid,
@@ -90,13 +103,14 @@ export async function completeAuth(
 
   await consumeOAuthState(state, normalizedShop);
 
-  if (!hmac || !validateHmac(toHmacQuery(query))) {
+  if (!validateHmac(toHmacQuery(query, normalizedShop))) {
     throw AppError.forbidden("Invalid HMAC. Request could not be authenticated.");
   }
 
+  const session = await exchangeAccessToken(normalizedShop, code);
   await deleteOAuthState(state);
 
-  return exchangeAccessToken(normalizedShop, code);
+  return session;
 }
 
 export async function exchangeAccessToken(
@@ -120,19 +134,16 @@ export async function exchangeAccessToken(
     throw AppError.internal("Failed to exchange authorization code for access token.");
   }
 
-  const tokenData = (await response.json()) as {
-    access_token: string;
-    scope: string;
-  };
+  const tokenData = validateTokenResponse(await response.json());
+  const now = new Date();
 
-  // 4. Store the session
   const session: ShopifySession = {
     shop,
     accessToken: tokenData.access_token,
-    scope: tokenData.scope.split(","),
+    scope: normalizeScopes(tokenData.scope),
     apiVersion: shopifyConfig.apiVersion,
-    installedAt: new Date(),
-    updatedAt: new Date(),
+    installedAt: now,
+    updatedAt: now,
   };
 
   return saveSession(session);
@@ -165,9 +176,42 @@ function normalizeShop(shop: string): ShopifyShopDomain {
   return shop.trim().toLowerCase() as ShopifyShopDomain;
 }
 
-function toHmacQuery(query: ShopifyAuthCallbackQuery): Record<string, string> {
+function normalizeScopes(scopes: string): readonly string[] {
+  return [...new Set(scopes.split(",").map((scope) => scope.trim()).filter(Boolean))].sort();
+}
+
+function validateTokenResponse(value: unknown): {
+  readonly access_token: string;
+  readonly scope: string;
+} {
+  if (!isRecord(value)) {
+    throw AppError.internal("Invalid Shopify token response.");
+  }
+
+  if (
+    typeof value.access_token !== "string" ||
+    value.access_token.trim().length === 0 ||
+    typeof value.scope !== "string"
+  ) {
+    throw AppError.internal("Invalid Shopify token response.");
+  }
+
   return {
-    shop: query.shop,
+    access_token: value.access_token,
+    scope: value.scope,
+  };
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null;
+}
+
+function toHmacQuery(
+  query: ShopifyAuthCallbackQuery,
+  normalizedShop: ShopifyShopDomain,
+): Record<string, string> {
+  return {
+    shop: normalizedShop,
     code: query.code,
     state: query.state,
     hmac: query.hmac,

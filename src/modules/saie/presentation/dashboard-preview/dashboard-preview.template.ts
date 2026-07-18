@@ -366,7 +366,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section id="overview" aria-labelledby="kpi-title">
           <div class="section-head">
             <h3 id="kpi-title">Executive KPI Cards</h3>
-            <p>Deterministic preview values only.</p>
+            <p>Repository-backed snapshot values with deterministic static sections.</p>
           </div>
           <div class="kpi-grid">${viewModel.kpis.map(renderKpi).join("")}</div>
         </section>
@@ -374,7 +374,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section aria-labelledby="operations-title">
           <div class="section-head">
             <h3 id="operations-title">Executive Operations Summary</h3>
-            <p>Preview counts, not live records.</p>
+            <p>Current in-memory repository counts.</p>
           </div>
           <div class="summary-grid">${viewModel.operationsSummary.map(renderOperationsSummary).join("")}</div>
         </section>
@@ -382,7 +382,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section aria-labelledby="agents-title">
           <div class="section-head">
             <h3 id="agents-title">Agent Status Cards</h3>
-            <p>Alpha capability snapshot.</p>
+            <p>Beta capability snapshot.</p>
           </div>
           <div class="card-grid">${viewModel.agents.map(renderAgent).join("")}</div>
         </section>
@@ -419,7 +419,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section id="proposal-queue" aria-labelledby="proposal-queue-title">
           <div class="section-head">
             <h3 id="proposal-queue-title">Proposal Queue Preview</h3>
-            <p>Read-only deterministic proposal states.</p>
+            <p>Read-only approval repository state.</p>
           </div>
           <div class="matrix">
             <table>
@@ -441,7 +441,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section id="agent-activity" aria-labelledby="activity-title">
           <div class="section-head">
             <h3 id="activity-title">Agent Activity Preview</h3>
-            <p>Preview activity labels, not live telemetry.</p>
+            <p>Recent audit records; deterministic previews and live events are labeled by source.</p>
           </div>
           <div class="matrix">
             <table>
@@ -461,7 +461,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section id="system-health" aria-labelledby="health-title">
           <div class="section-head">
             <h3 id="health-title">System Health Preview</h3>
-            <p>Alpha status by component.</p>
+            <p>Beta status by component.</p>
           </div>
           <div class="card-grid">${viewModel.systemHealth.map(renderSystemHealth).join("")}</div>
         </section>
@@ -494,7 +494,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section aria-labelledby="risk-title">
           <div class="section-head">
             <h3 id="risk-title">Executive Risk Panel</h3>
-            <p>Current Alpha limitations.</p>
+            <p>Current Beta limitations.</p>
           </div>
           <div class="risk-grid">${viewModel.executiveRisks.map(renderRisk).join("")}</div>
         </section>
@@ -510,7 +510,7 @@ export const renderDashboardPreviewHtml = (viewModel: DashboardViewModel): strin
         <section id="release-timeline" aria-labelledby="timeline-title">
           <div class="section-head">
             <h3 id="timeline-title">Release Timeline</h3>
-            <p>SAIE Alpha delivery path.</p>
+            <p>SAIE Beta delivery path.</p>
           </div>
           <div class="timeline">${viewModel.releaseTimeline.map(renderTimelineItem).join("")}</div>
         </section>
@@ -620,7 +620,7 @@ const renderIntegrationGroup = (group: DashboardIntegrationGroup): string => `
     <h4>${escapeHtml(group.name)}</h4>
     ${
       group.integrations.length === 0
-        ? '<p class="muted">No additional integrations available in Alpha.</p>'
+        ? '<p class="muted">No additional integrations available in Beta.</p>'
         : `<div class="card-grid">${group.integrations.map(renderIntegration).join("")}</div>`
     }
   </article>`;

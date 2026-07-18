@@ -454,7 +454,7 @@ const createEngineMetadata = () => ({
 }) as const;
 
 const createReleaseSummary = (): ExecutiveReleaseSummary => ({
-  releaseName: "SAIE v0.1.0 Alpha",
+  releaseName: "SAIE v0.2.0 Beta",
   stabilizationSprint: "SAIE-01.10.1",
   proposalOnly: true,
   humanApprovalRequired: true,

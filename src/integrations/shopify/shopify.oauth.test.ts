@@ -16,12 +16,15 @@ vi.mock("./shopify.config.js", () => {
       },
     },
     isValidShopDomain: (shop: string): boolean => {
-      return /^[a-z0-9-]+\.myshopify\.com$/.test(shop.trim().toLowerCase());
+      return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.myshopify\.com$/.test(
+        shop.trim().toLowerCase(),
+      );
     },
   };
 });
 
 import { shopifyConfig } from "./shopify.config.js";
+import { canonicalizeShopifyHmacMessage, validateHmac } from "./shopify.hmac.js";
 import {
   beginAuth,
   completeAuth,
@@ -44,8 +47,11 @@ import type {
 const DEFAULT_TEST_SHOP: ShopifyShopDomain = "sirehshope.myshopify.com";
 
 describe("Shopify OAuth recovery", () => {
+  let sessionRepository: InMemoryShopifySessionRepository;
+
   beforeEach(() => {
-    setShopifySessionRepositoryForTesting(new InMemoryShopifySessionRepository());
+    sessionRepository = new InMemoryShopifySessionRepository();
+    setShopifySessionRepositoryForTesting(sessionRepository);
     setOAuthStateRepositoryForTesting(new InMemoryShopifyOAuthStateRepository());
   });
 
@@ -67,6 +73,15 @@ describe("Shopify OAuth recovery", () => {
 
   it("rejects invalid shop domains", async () => {
     await expect(beginAuth("not-shopify.example.com")).rejects.toThrow(
+      "Invalid shop domain provided.",
+    );
+    await expect(beginAuth("https://sirehshope.myshopify.com")).rejects.toThrow(
+      "Invalid shop domain provided.",
+    );
+    await expect(beginAuth("sirehshope.myshopify.com/admin")).rejects.toThrow(
+      "Invalid shop domain provided.",
+    );
+    await expect(beginAuth("-sirehshope.myshopify.com")).rejects.toThrow(
       "Invalid shop domain provided.",
     );
   });
@@ -92,6 +107,22 @@ describe("Shopify OAuth recovery", () => {
 
     expect(session.shop).toBe("sirehshope.myshopify.com");
     expect(session.accessToken).toBe("test-access-token");
+  });
+
+  it("creates sessions only after complete OAuth validation and stores deterministic scopes", async () => {
+    stubSuccessfulTokenExchange("test-access-token", "write_products,read_products,read_products");
+    const authorizeUrl = new URL(await beginAuth("SIREHSHOPE.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+
+    await expect(completeAuth(buildSignedCallback({ state }))).resolves.toMatchObject({
+      shop: "sirehshope.myshopify.com",
+      scope: ["read_products", "write_products"],
+    });
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toMatchObject({
+      shop: DEFAULT_TEST_SHOP,
+      scope: ["read_products", "write_products"],
+    });
   });
 
   it("rejects missing state", async () => {
@@ -149,6 +180,59 @@ describe("Shopify OAuth recovery", () => {
     expect(tokenExchange).not.toHaveBeenCalled();
   });
 
+  it("does not overwrite an existing session after failed HMAC validation", async () => {
+    const existingSession = buildSession({
+      accessToken: "existing-access-token",
+      scope: ["read_products"],
+    });
+    await sessionRepository.saveSession(existingSession);
+    const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+    const query = buildSignedCallback({ state });
+
+    await expect(
+      completeAuth({ ...query, hmac: "f".repeat(64) }),
+    ).rejects.toThrow("Invalid HMAC. Request could not be authenticated.");
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toEqual(
+      existingSession,
+    );
+  });
+
+  it("does not create a session after invalid state", async () => {
+    stubSuccessfulTokenExchange();
+
+    await expect(
+      completeAuth(buildSignedCallback({ state: "missing-state" })),
+    ).rejects.toThrow("Invalid state. OAuth request cannot be verified.");
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toBeUndefined();
+  });
+
+  it("does not create a session after token-exchange failure", async () => {
+    stubFailedTokenExchange();
+    const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+
+    await expect(completeAuth(buildSignedCallback({ state }))).rejects.toThrow(
+      "Failed to exchange authorization code for access token.",
+    );
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toBeUndefined();
+  });
+
+  it("does not create a session after invalid token response shape", async () => {
+    stubInvalidTokenExchange();
+    const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+
+    await expect(completeAuth(buildSignedCallback({ state }))).rejects.toThrow(
+      "Invalid Shopify token response.",
+    );
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toBeUndefined();
+  });
+
   it("removes state after successful validation", async () => {
     stubSuccessfulTokenExchange();
     const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
@@ -160,6 +244,128 @@ describe("Shopify OAuth recovery", () => {
     await expect(completeAuth(query)).rejects.toThrow(
       "Invalid state. OAuth request cannot be verified.",
     );
+  });
+
+  it("supports simultaneous states for multiple stores", async () => {
+    stubSuccessfulTokenExchange();
+    const firstUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const secondUrl = new URL(await beginAuth("second-shop.myshopify.com"));
+    const firstState = requireSearchParam(firstUrl, "state");
+    const secondState = requireSearchParam(secondUrl, "state");
+
+    await expect(
+      completeAuth(buildSignedCallback({ shop: "second-shop.myshopify.com", state: secondState })),
+    ).resolves.toMatchObject({ shop: "second-shop.myshopify.com" });
+
+    await expect(completeAuth(buildSignedCallback({ state: firstState }))).resolves.toMatchObject({
+      shop: "sirehshope.myshopify.com",
+    });
+  });
+
+  it("updates only the matching shop session after successful reauthorization", async () => {
+    stubSuccessfulTokenExchange("updated-access-token");
+    const unrelatedSession = buildSession({
+      shop: "second-shop.myshopify.com",
+      accessToken: "unrelated-access-token",
+    });
+    await sessionRepository.saveSession(buildSession({ accessToken: "old-access-token" }));
+    await sessionRepository.saveSession(unrelatedSession);
+    const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+
+    await expect(completeAuth(buildSignedCallback({ state }))).resolves.toMatchObject({
+      shop: "sirehshope.myshopify.com",
+      accessToken: "updated-access-token",
+    });
+
+    await expect(sessionRepository.getSession("second-shop.myshopify.com")).resolves.toEqual(
+      unrelatedSession,
+    );
+  });
+
+  it("preserves an existing valid session after token-exchange failure during reauthorization", async () => {
+    stubFailedTokenExchange();
+    const existingSession = buildSession({
+      accessToken: "existing-access-token",
+      scope: ["read_products"],
+    });
+    const unrelatedSession = buildSession({
+      shop: "second-shop.myshopify.com",
+      accessToken: "unrelated-access-token",
+    });
+    await sessionRepository.saveSession(existingSession);
+    await sessionRepository.saveSession(unrelatedSession);
+    const authorizeUrl = new URL(await beginAuth("sirehshope.myshopify.com"));
+    const state = requireSearchParam(authorizeUrl, "state");
+
+    await expect(completeAuth(buildSignedCallback({ state }))).rejects.toThrow(
+      "Failed to exchange authorization code for access token.",
+    );
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toEqual(
+      existingSession,
+    );
+    await expect(sessionRepository.getSession("second-shop.myshopify.com")).resolves.toEqual(
+      unrelatedSession,
+    );
+  });
+
+  it("deletes only the requested shop session and treats repeated deletion as safe", async () => {
+    const unrelatedSession = buildSession({
+      shop: "second-shop.myshopify.com",
+      accessToken: "unrelated-access-token",
+    });
+    await sessionRepository.saveSession(buildSession());
+    await sessionRepository.saveSession(unrelatedSession);
+
+    await sessionRepository.deleteSession(DEFAULT_TEST_SHOP);
+    await sessionRepository.deleteSession(DEFAULT_TEST_SHOP);
+
+    await expect(sessionRepository.getSession(DEFAULT_TEST_SHOP)).resolves.toBeUndefined();
+    await expect(sessionRepository.getSession("second-shop.myshopify.com")).resolves.toEqual(
+      unrelatedSession,
+    );
+  });
+});
+
+describe("Shopify HMAC validation", () => {
+  it("accepts a valid Shopify-compliant HMAC", () => {
+    expect(validateHmac(toHmacRecord(buildSignedCallback()))).toBe(true);
+  });
+
+  it("rejects missing, invalid, malformed, and incorrectly sized HMAC values safely", () => {
+    const { hmac, ...queryWithoutHmac } = buildSignedCallback();
+    void hmac;
+
+    expect(validateHmac(queryWithoutHmac as Record<string, string>)).toBe(false);
+    expect(validateHmac({ ...buildSignedCallback(), hmac: "f".repeat(64) })).toBe(false);
+    expect(validateHmac({ ...buildSignedCallback(), hmac: "invalid-hmac" })).toBe(false);
+    expect(validateHmac({ ...buildSignedCallback(), hmac: "f".repeat(63) })).toBe(false);
+    expect(validateHmac({ ...buildSignedCallback(), hmac: "f".repeat(65) })).toBe(false);
+  });
+
+  it("excludes hmac and signature while sorting callback parameters deterministically", () => {
+    const query = {
+      state: "test-state",
+      hmac: "ignored",
+      shop: DEFAULT_TEST_SHOP,
+      signature: "legacy-signature",
+      code: "test-code",
+      timestamp: "1780000000",
+    };
+
+    expect(canonicalizeShopifyHmacMessage(query)).toBe(
+      "code=test-code&shop=sirehshope.myshopify.com&state=test-state&timestamp=1780000000",
+    );
+  });
+
+  it("does not mutate the input query object", () => {
+    const query = buildSignedCallback({ host: "encoded-host" });
+    const originalQuery = { ...query };
+
+    validateHmac(toHmacRecord(query));
+
+    expect(query).toEqual(originalQuery);
   });
 });
 
@@ -285,9 +491,20 @@ function buildSignedCallback(
 }
 
 function signQuery(query: Omit<ShopifyAuthCallbackQuery, "hmac">): string {
-  const message = new URLSearchParams(query).toString();
+  const message = canonicalizeShopifyHmacMessage(query);
 
   return crypto.createHmac("sha256", shopifyConfig.apiSecret).update(message).digest("hex");
+}
+
+function toHmacRecord(query: ShopifyAuthCallbackQuery): Record<string, string> {
+  return {
+    shop: query.shop,
+    code: query.code,
+    state: query.state,
+    hmac: query.hmac,
+    ...(query.host === undefined ? {} : { host: query.host }),
+    ...(query.timestamp === undefined ? {} : { timestamp: query.timestamp }),
+  };
 }
 
 function requireSearchParam(url: URL, key: string): string {
@@ -300,7 +517,10 @@ function requireSearchParam(url: URL, key: string): string {
   return value;
 }
 
-function stubSuccessfulTokenExchange(): ReturnType<typeof vi.fn> {
+function stubSuccessfulTokenExchange(
+  accessToken = "test-access-token",
+  scope = "read_products,write_products",
+): ReturnType<typeof vi.fn> {
   const tokenExchange = vi.fn((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     void input;
     void init;
@@ -308,8 +528,8 @@ function stubSuccessfulTokenExchange(): ReturnType<typeof vi.fn> {
     return Promise.resolve(
       new Response(
         JSON.stringify({
-          access_token: "test-access-token",
-          scope: "read_products,write_products",
+          access_token: accessToken,
+          scope,
         }),
         {
           status: 200,
@@ -322,4 +542,47 @@ function stubSuccessfulTokenExchange(): ReturnType<typeof vi.fn> {
   vi.stubGlobal("fetch", tokenExchange);
 
   return tokenExchange;
+}
+
+function stubFailedTokenExchange(): ReturnType<typeof vi.fn> {
+  const tokenExchange = vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  );
+
+  vi.stubGlobal("fetch", tokenExchange);
+
+  return tokenExchange;
+}
+
+function stubInvalidTokenExchange(): ReturnType<typeof vi.fn> {
+  const tokenExchange = vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ scope: "read_products" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  );
+
+  vi.stubGlobal("fetch", tokenExchange);
+
+  return tokenExchange;
+}
+
+function buildSession(overrides: Partial<ShopifySession> = {}): ShopifySession {
+  const now = new Date("2026-01-01T00:00:00.000Z");
+
+  return {
+    shop: overrides.shop ?? DEFAULT_TEST_SHOP,
+    accessToken: overrides.accessToken ?? "test-access-token",
+    scope: overrides.scope ?? ["read_products", "write_products"],
+    apiVersion: overrides.apiVersion ?? shopifyConfig.apiVersion,
+    installedAt: overrides.installedAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+  };
 }

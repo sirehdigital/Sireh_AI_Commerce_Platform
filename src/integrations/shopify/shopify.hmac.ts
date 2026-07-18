@@ -9,6 +9,8 @@
 import crypto from "node:crypto";
 import { shopifyConfig } from "./shopify.config.js";
 
+const SHOPIFY_HMAC_HEX_PATTERN = /^[a-f0-9]{64}$/i;
+
 /**
  * Validates the HMAC signature of a Shopify request.
  * @param query - The query parameters from the Shopify request.
@@ -16,14 +18,11 @@ import { shopifyConfig } from "./shopify.config.js";
  */
 export function validateHmac(query: Record<string, string>): boolean {
   const { hmac } = query;
-  if (!hmac) {
+  if (typeof hmac !== "string" || !SHOPIFY_HMAC_HEX_PATTERN.test(hmac)) {
     return false;
   }
 
-  const messageEntries = Object.entries(query)
-    .filter(([key]) => key !== "hmac" && key !== "signature")
-    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
-  const message = messageEntries.map(([key, value]) => `${key}=${value}`).join("&");
+  const message = canonicalizeShopifyHmacMessage(query);
 
   const generatedHmac = crypto
     .createHmac("sha256", shopifyConfig.apiSecret)
@@ -33,7 +32,7 @@ export function validateHmac(query: Record<string, string>): boolean {
   console.log("Shopify HMAC validation", {
     calculatedHmacPrefix: generatedHmac.slice(0, 8),
     receivedHmacPrefix: hmac.slice(0, 8),
-    messageKeys: messageEntries.map(([key]) => key),
+    messageKeys: getSignedMessageKeys(query),
   });
 
   const generatedBuffer = Buffer.from(generatedHmac, "hex");
@@ -48,4 +47,18 @@ export function validateHmac(query: Record<string, string>): boolean {
 
 export function verifyShopifyHmac(searchParams: URLSearchParams): boolean {
   return validateHmac(Object.fromEntries(searchParams.entries()));
+}
+
+export function canonicalizeShopifyHmacMessage(query: Record<string, string>): string {
+  return Object.entries(query)
+    .filter(([key]) => key !== "hmac" && key !== "signature")
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+}
+
+function getSignedMessageKeys(query: Record<string, string>): readonly string[] {
+  return Object.keys(query)
+    .filter((key) => key !== "hmac" && key !== "signature")
+    .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
 }

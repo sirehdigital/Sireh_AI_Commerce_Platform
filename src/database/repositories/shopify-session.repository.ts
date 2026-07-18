@@ -1,4 +1,6 @@
 import { prisma } from "../prisma/prisma.client.js";
+import { AppError } from "../../shared/errors/app-error.js";
+import { isValidShopDomain } from "../../integrations/shopify/shopify.config.js";
 import type {
   ShopifyApiVersion,
   ShopifySession,
@@ -6,12 +8,16 @@ import type {
 } from "../../integrations/shopify/shopify.types.js";
 
 export interface ShopifySessionRecord {
+  readonly id?: string;
   readonly shopDomain: string;
   readonly accessToken: string;
   readonly scopes: string;
   readonly apiVersion: string;
+  readonly tenantId?: string | null;
   readonly installedAt: Date;
   readonly updatedAt: Date;
+  readonly expiresAt?: Date | null;
+  readonly revokedAt?: Date | null;
 }
 
 export interface ShopifySessionWhereUniqueInput {
@@ -48,44 +54,55 @@ export interface ShopifySessionPrismaClient {
 
 export interface ShopifySessionRepository {
   saveSession(session: ShopifySession): Promise<ShopifySession>;
-  getSession(shopDomain: ShopifyShopDomain): Promise<ShopifySession | undefined>;
-  deleteSession(shopDomain: ShopifyShopDomain): Promise<void>;
-  hasSession(shopDomain: ShopifyShopDomain): Promise<boolean>;
+  getSession(shopDomain: string): Promise<ShopifySession | undefined>;
+  deleteSession(shopDomain: string): Promise<void>;
+  hasSession(shopDomain: string): Promise<boolean>;
 }
 
 export class PrismaShopifySessionRepository implements ShopifySessionRepository {
   public constructor(private readonly client: ShopifySessionPrismaClient) {}
 
   public async saveSession(session: ShopifySession): Promise<ShopifySession> {
+    const normalizedShop = this.normalizeShopDomain(session.shop);
+    const preparedSession = this.copySession({
+      ...session,
+      shop: normalizedShop,
+      scope: this.normalizeScopes(session.scope),
+      updatedAt: new Date(session.updatedAt),
+    });
+
     const saved = await this.client.shopifySession.upsert({
-      where: { shopDomain: session.shop },
-      create: this.toRecord(session),
+      where: { shopDomain: normalizedShop },
+      create: this.toRecord(preparedSession),
       update: {
-        accessToken: session.accessToken,
-        scopes: this.serializeScopes(session.scope),
-        apiVersion: session.apiVersion,
-        updatedAt: session.updatedAt,
+        accessToken: preparedSession.accessToken,
+        scopes: this.serializeScopes(preparedSession.scope),
+        apiVersion: preparedSession.apiVersion,
+        updatedAt: preparedSession.updatedAt,
       },
     });
 
     return this.toSession(saved);
   }
 
-  public async getSession(shopDomain: ShopifyShopDomain): Promise<ShopifySession | undefined> {
+  public async getSession(shopDomain: string): Promise<ShopifySession | undefined> {
+    const normalizedShop = this.normalizeShopDomain(shopDomain);
     const stored = await this.client.shopifySession.findUnique({
-      where: { shopDomain },
+      where: { shopDomain: normalizedShop },
     });
 
     return stored === null ? undefined : this.toSession(stored);
   }
 
-  public async deleteSession(shopDomain: ShopifyShopDomain): Promise<void> {
+  public async deleteSession(shopDomain: string): Promise<void> {
+    const normalizedShop = this.normalizeShopDomain(shopDomain);
+
     await this.client.shopifySession.deleteMany({
-      where: { shopDomain },
+      where: { shopDomain: normalizedShop },
     });
   }
 
-  public async hasSession(shopDomain: ShopifyShopDomain): Promise<boolean> {
+  public async hasSession(shopDomain: string): Promise<boolean> {
     return (await this.getSession(shopDomain)) !== undefined;
   }
 
@@ -101,18 +118,44 @@ export class PrismaShopifySessionRepository implements ShopifySessionRepository 
   }
 
   private toSession(record: ShopifySessionRecord): ShopifySession {
-    return {
-      shop: record.shopDomain as ShopifyShopDomain,
+    const normalizedShop = this.normalizeShopDomain(record.shopDomain);
+    const expiresAt = record.expiresAt ?? undefined;
+    const revokedAt = record.revokedAt ?? undefined;
+
+    if (record.accessToken.trim().length === 0) {
+      throw AppError.internal("Stored Shopify session is invalid.");
+    }
+
+    if (record.apiVersion.trim().length === 0) {
+      throw AppError.internal("Stored Shopify session is invalid.");
+    }
+
+    if (revokedAt !== undefined) {
+      throw AppError.unauthorized("Shopify session has been revoked.");
+    }
+
+    if (expiresAt !== undefined && expiresAt.getTime() <= Date.now()) {
+      throw AppError.unauthorized("Shopify session has expired.");
+    }
+
+    return this.copySession({
+      ...(record.id === undefined ? {} : { id: record.id }),
+      shop: normalizedShop,
       accessToken: record.accessToken,
       scope: this.deserializeScopes(record.scopes),
       apiVersion: record.apiVersion as ShopifyApiVersion,
-      installedAt: record.installedAt,
-      updatedAt: record.updatedAt,
-    };
+      ...(record.tenantId === null || record.tenantId === undefined
+        ? {}
+        : { tenantId: record.tenantId }),
+      installedAt: new Date(record.installedAt),
+      updatedAt: new Date(record.updatedAt),
+      ...(expiresAt === undefined ? {} : { expiresAt: new Date(expiresAt) }),
+      ...(revokedAt === undefined ? {} : { revokedAt: new Date(revokedAt) }),
+    });
   }
 
   private serializeScopes(scopes: readonly string[]): string {
-    return scopes.join(",");
+    return this.normalizeScopes(scopes).join(",");
   }
 
   private deserializeScopes(scopes: string): readonly string[] {
@@ -120,7 +163,36 @@ export class PrismaShopifySessionRepository implements ShopifySessionRepository 
       return [];
     }
 
-    return scopes.split(",").map((scope) => scope.trim()).filter((scope) => scope.length > 0);
+    return this.normalizeScopes(scopes.split(","));
+  }
+
+  private normalizeShopDomain(shopDomain: string): ShopifyShopDomain {
+    const normalizedShop = shopDomain.trim().toLowerCase();
+
+    if (!isValidShopDomain(normalizedShop)) {
+      throw AppError.badRequest("Invalid shop domain provided.");
+    }
+
+    return normalizedShop as ShopifyShopDomain;
+  }
+
+  private normalizeScopes(scopes: readonly string[]): readonly string[] {
+    return [...new Set(scopes.map((scope) => scope.trim()).filter((scope) => scope.length > 0))].sort();
+  }
+
+  private copySession(session: ShopifySession): ShopifySession {
+    return {
+      ...(session.id === undefined ? {} : { id: session.id }),
+      shop: session.shop,
+      accessToken: session.accessToken,
+      scope: [...session.scope],
+      apiVersion: session.apiVersion,
+      ...(session.tenantId === undefined ? {} : { tenantId: session.tenantId }),
+      installedAt: new Date(session.installedAt),
+      updatedAt: new Date(session.updatedAt),
+      ...(session.expiresAt === undefined ? {} : { expiresAt: new Date(session.expiresAt) }),
+      ...(session.revokedAt === undefined ? {} : { revokedAt: new Date(session.revokedAt) }),
+    };
   }
 }
 

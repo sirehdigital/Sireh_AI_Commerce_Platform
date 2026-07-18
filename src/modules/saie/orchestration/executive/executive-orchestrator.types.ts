@@ -81,7 +81,7 @@ export interface ExecutiveEngineMetadata {
 }
 
 export interface ExecutiveReleaseSummary {
-  readonly releaseName: "SAIE v0.1.0 Alpha";
+  readonly releaseName: "SAIE v0.2.0 Beta";
   readonly stabilizationSprint: "SAIE-01.10.1";
   readonly proposalOnly: true;
   readonly humanApprovalRequired: true;

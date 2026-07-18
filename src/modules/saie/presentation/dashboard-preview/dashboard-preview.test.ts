@@ -6,7 +6,7 @@ import { DashboardPreviewService } from "./dashboard-preview.service.js";
 import { renderDashboardPreviewHtml } from "./dashboard-preview.template.js";
 
 describe("DashboardPreviewService", () => {
-  it("creates a deterministic SAIE-01.13 console preview view model", () => {
+  it("creates a deterministic SAIE-02.10 beta console preview view model", () => {
     const viewModel = new DashboardPreviewService().createViewModel({
       NODE_ENV: "production",
       SHOPIFY_API_KEY: "secret-key",
@@ -18,14 +18,14 @@ describe("DashboardPreviewService", () => {
       engineName: "Sireh AI Engine",
       subtitle: "Enterprise AI Operating System",
       tagline: "Building the Future with AI",
-      version: "v0.1.0 Alpha",
-      build: "SAIE-01.13",
+      version: "v0.2.0 Beta",
+      build: "SAIE-02.10",
       environmentLabel: "Production",
       footer: {
         company: "Sireh Digital",
         poweredBy: "Powered by SAIE",
-        version: "v0.1.0 Alpha",
-        build: "Build SAIE-01.13",
+        version: "v0.2.0 Beta",
+        build: "Build SAIE-02.10",
       },
       executableActions: [],
     });
@@ -106,14 +106,14 @@ describe("DashboardPreviewService", () => {
     expect(health.find((item) => item.component === "Shopify Integration")?.status).toBe("LIMITED");
   });
 
-  it("represents Alpha limitations accurately in the executive risk panel", () => {
+  it("represents Beta limitations accurately in the executive risk panel", () => {
     const risks = new DashboardPreviewService().createViewModel({ NODE_ENV: "test" }).executiveRisks;
 
     expect(risks.map((risk) => risk.limitation)).toEqual([
       "No durable persistence",
       "No live approval queue",
       "No RBAC",
-      "No tenant isolation",
+      "Process-local tenant isolation",
       "No background jobs",
       "No live observability",
     ]);
@@ -165,7 +165,7 @@ describe("dashboardPreviewRouter", () => {
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.text).toContain("<!doctype html>");
     expect(response.text).toContain("Sireh AI Engine");
-    expect(response.text).toContain("SAIE-01.13");
+    expect(response.text).toContain("SAIE-02.10");
   });
 
   it("keeps route-level security headers for a self-contained Shopify iframe preview", async () => {

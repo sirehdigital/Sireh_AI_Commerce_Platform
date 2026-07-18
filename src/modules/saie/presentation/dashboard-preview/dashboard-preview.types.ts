@@ -88,15 +88,15 @@ export interface DashboardViewModel {
   readonly engineName: "Sireh AI Engine";
   readonly subtitle: "Enterprise AI Operating System";
   readonly tagline: "Building the Future with AI";
-  readonly version: "v0.1.0 Alpha";
-  readonly build: "SAIE-01.13";
+  readonly version: "v0.2.0 Beta";
+  readonly build: "SAIE-02.10";
   readonly environmentLabel: string;
   readonly systemOverview: {
     readonly engineStatus: "Operational";
     readonly safetyMode: "Human Approval Required";
     readonly executionMode: "Proposal Only";
     readonly shopifyIntegration: "Configured" | "Not Configured";
-    readonly releaseChannel: "Alpha";
+    readonly releaseChannel: "Beta";
   };
   readonly heroBadges: readonly string[];
   readonly navigation: readonly string[];
@@ -119,8 +119,8 @@ export interface DashboardViewModel {
   readonly footer: {
     readonly company: "Sireh Digital";
     readonly poweredBy: "Powered by SAIE";
-    readonly version: "v0.1.0 Alpha";
-    readonly build: "Build SAIE-01.13";
+    readonly version: "v0.2.0 Beta";
+    readonly build: "Build SAIE-02.10";
   };
   readonly executableActions: readonly [];
 }

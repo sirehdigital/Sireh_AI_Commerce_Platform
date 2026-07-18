@@ -25,7 +25,7 @@ export const shopifyConfig = {
   },
 };
 
-const SHOPIFY_DOMAIN_REGEX = /^[a-z0-9-]+\.myshopify\.com$/;
+const SHOPIFY_DOMAIN_REGEX = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.myshopify\.com$/;
 
 /**
  * Validates if the provided shop domain is a valid *.myshopify.com domain.

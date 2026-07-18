@@ -11,12 +11,16 @@ export type ShopifyAccessToken = string;
 export type ShopifyApiVersion = `${number}-${number}`;
 
 export interface ShopifySession {
+  readonly id?: string;
   readonly shop: ShopifyShopDomain;
   readonly accessToken: ShopifyAccessToken;
   readonly scope: readonly string[];
   readonly apiVersion: ShopifyApiVersion;
+  readonly tenantId?: string;
   readonly installedAt: Date;
   readonly updatedAt: Date;
+  readonly expiresAt?: Date;
+  readonly revokedAt?: Date;
 }
 
 export type ShopifyWebhookTopic =
