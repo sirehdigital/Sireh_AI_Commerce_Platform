@@ -305,3 +305,75 @@ model AuditRecord {
   @@index([tenantId, storeId, correlationId])
   @@index([tenantId, storeId, occurredAt])
 }
+
+model ProductMediaJob {
+  id                    String    @id
+  tenantId              String
+  storeId               String
+  shopDomain            String?
+  productDraftId        String
+  importId              String?
+  parentJobId           String?
+  idempotencyKey        String
+  mode                  String
+  status                String
+  providerId            String?
+  brandProfileSnapshot  Json
+  planSnapshot          Json
+  qualityReportSnapshot Json
+  warnings              Json
+  failureStage          String?
+  failureCode           String?
+  failureMessage        String?
+  approvalId            String?
+  auditReference        String?
+  correlationId         String?
+  forced                Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  completedAt           DateTime?
+
+  assets ProductMediaAsset[]
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, productDraftId])
+  @@index([tenantId, storeId, idempotencyKey])
+  @@index([tenantId, storeId, status])
+  @@index([approvalId])
+  @@index([parentJobId])
+}
+
+model ProductMediaAsset {
+  id                     String   @id
+  tenantId               String
+  storeId                String
+  mediaJobId             String
+  assetType              String
+  purpose                String
+  status                 String
+  aspectRatio            String
+  width                  Int
+  height                 Int
+  format                 String
+  promptSnapshot         Json
+  negativePrompt         String?
+  sourceAssetReferences  Json
+  providerId             String?
+  providerReference      String?
+  storageKey             String?
+  outputUrl              String?
+  altText                String
+  reviewNotes            String?
+  failureCode            String?
+  failureMessage         String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  job ProductMediaJob @relation(fields: [mediaJobId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, storeId])
+  @@index([mediaJobId])
+  @@index([tenantId, storeId, assetType])
+  @@index([tenantId, storeId, status])
+  @@index([providerReference])
+}
