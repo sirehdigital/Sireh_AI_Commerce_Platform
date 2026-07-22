@@ -5,4 +5,6 @@ export * from "./in-memory-audit.repository.js";
 export * from "./in-memory-approval.repository.js";
 export * from "./in-memory-execution.repository.js";
 export * from "./in-memory-workflow.repository.js";
+export * from "./prisma-approval.repository.js";
+export * from "./prisma-audit.repository.js";
 export * from "./workflow-seed.provider.js";

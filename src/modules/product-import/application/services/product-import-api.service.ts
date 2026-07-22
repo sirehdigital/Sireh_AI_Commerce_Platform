@@ -1,5 +1,7 @@
 import { AppError } from "../../../../shared/errors/app-error.js";
-import type { TenantContext } from "../../../saie/application/index.js";
+import type { ApprovalRecord, AuditRecord, TenantContext } from "../../../saie/application/index.js";
+import type { ProductDraft } from "../../../product-draft/domain/models/product-draft.model.js";
+import type { ProductDraftRepository } from "../../../product-draft/domain/repositories/product-draft.repository.js";
 import type {
   ProductImportExecutionInput,
   ProductImportListQuery,
@@ -52,6 +54,36 @@ export interface ProductImportDetailResponse extends ProductImportSummaryRespons
   readonly warnings: readonly string[];
   readonly failureStage?: ProductImportRecord["failureStage"];
   readonly parentImportId?: string;
+  readonly linkedResources?: ProductImportLinkedResourcesResponse;
+}
+
+export interface ProductImportLinkedResourcesResponse {
+  readonly productDraft?: ProductImportProductDraftSummaryResponse;
+  readonly approval?: ProductImportApprovalSummaryResponse;
+  readonly audit?: ProductImportAuditSummaryResponse;
+}
+
+export interface ProductImportProductDraftSummaryResponse {
+  readonly id: string;
+  readonly status: ProductDraft["status"];
+  readonly title: string;
+  readonly version: number;
+}
+
+export interface ProductImportApprovalSummaryResponse {
+  readonly id: string;
+  readonly status: ApprovalRecord["status"];
+  readonly proposalId: string;
+  readonly requiresHumanApproval: boolean;
+  readonly executionEnabled: boolean;
+}
+
+export interface ProductImportAuditSummaryResponse {
+  readonly id: string;
+  readonly eventType: AuditRecord["eventType"];
+  readonly entityId: string;
+  readonly status?: AuditRecord["status"];
+  readonly occurredAt: string;
 }
 
 export interface ProductImportStatusResponse {
@@ -75,10 +107,23 @@ export interface ProductImportListResponse {
   readonly nextOffset?: number;
 }
 
+type MaybePromise<T> = T | Promise<T>;
+
+export interface ProductImportApiLinkedRepositoryDependencies {
+  readonly productDraftRepositoryFactory?: (tenant: TenantContext) => ProductDraftRepository;
+  readonly approvalRepository?: {
+    readonly findById: (tenant: TenantContext, approvalId: string) => MaybePromise<ApprovalRecord | undefined>;
+  };
+  readonly auditRepository?: {
+    readonly findById: (tenant: TenantContext, auditId: string) => MaybePromise<AuditRecord | undefined>;
+  };
+}
+
 export class ProductImportApiService {
   public constructor(
     private readonly pipeline: AIProductImportPipelineService,
     private readonly repository: ProductImportRepository,
+    private readonly linkedRepositories: ProductImportApiLinkedRepositoryDependencies = {},
   ) {}
 
   public async startImport(
@@ -90,10 +135,10 @@ export class ProductImportApiService {
     const record = await this.repository.findById(result.importId);
 
     if (record === undefined) {
-      return this.toDetailResponse(this.toFallbackRecord(result, request, tenant));
+      return this.toDetailResponse(this.toFallbackRecord(result, request, tenant), tenant);
     }
 
-    return this.toDetailResponse(record);
+    return this.toDetailResponse(record, tenant);
   }
 
   public async listImports(
@@ -122,7 +167,7 @@ export class ProductImportApiService {
   }
 
   public async getImport(importId: string, tenant: TenantContext): Promise<ProductImportDetailResponse> {
-    return this.toDetailResponse(await this.getTenantRecord(importId, tenant));
+    return this.toDetailResponse(await this.getTenantRecord(importId, tenant), tenant);
   }
 
   public async getImportStatus(importId: string, tenant: TenantContext): Promise<ProductImportStatusResponse> {
@@ -156,10 +201,10 @@ export class ProductImportApiService {
         requestedBy,
         forceReimport: true,
         ...(correlationId === undefined ? {} : { correlationId }),
-      }, tenant));
+      }, tenant), tenant);
     }
 
-    return this.toDetailResponse(retryRecord);
+    return this.toDetailResponse(retryRecord, tenant);
   }
 
   private throwForFailedMutation(result: ProductImportPipelineResult): void {
@@ -228,7 +273,9 @@ export class ProductImportApiService {
     };
   }
 
-  private toDetailResponse(record: ProductImportRecord): ProductImportDetailResponse {
+  private async toDetailResponse(record: ProductImportRecord, tenant: TenantContext): Promise<ProductImportDetailResponse> {
+    const linkedResources = await this.toLinkedResources(record, tenant);
+
     return {
       ...this.toSummaryResponse(record),
       ...(record.supplierName === undefined ? {} : { supplierName: record.supplierName }),
@@ -239,6 +286,90 @@ export class ProductImportApiService {
       warnings: record.warnings,
       ...(record.failureStage === undefined ? {} : { failureStage: record.failureStage }),
       ...(record.parentImportId === undefined ? {} : { parentImportId: record.parentImportId }),
+      ...(linkedResources === undefined ? {} : { linkedResources }),
+    };
+  }
+
+  private async toLinkedResources(
+    record: ProductImportRecord,
+    tenant: TenantContext,
+  ): Promise<ProductImportLinkedResourcesResponse | undefined> {
+    const [productDraft, approval, audit] = await Promise.all([
+      this.findLinkedProductDraft(record, tenant),
+      this.findLinkedApproval(record, tenant),
+      this.findLinkedAudit(record, tenant),
+    ]);
+    const linkedResources: ProductImportLinkedResourcesResponse = {
+      ...(productDraft === undefined ? {} : { productDraft }),
+      ...(approval === undefined ? {} : { approval }),
+      ...(audit === undefined ? {} : { audit }),
+    };
+
+    return Object.keys(linkedResources).length === 0 ? undefined : linkedResources;
+  }
+
+  private async findLinkedProductDraft(
+    record: ProductImportRecord,
+    tenant: TenantContext,
+  ): Promise<ProductImportProductDraftSummaryResponse | undefined> {
+    if (record.productDraftId === undefined || this.linkedRepositories.productDraftRepositoryFactory === undefined) {
+      return undefined;
+    }
+
+    const draft = await this.linkedRepositories.productDraftRepositoryFactory(tenant).findById(record.productDraftId);
+    if (draft === null) {
+      return undefined;
+    }
+
+    return {
+      id: draft.id,
+      status: draft.status,
+      title: draft.title,
+      version: draft.version,
+    };
+  }
+
+  private async findLinkedApproval(
+    record: ProductImportRecord,
+    tenant: TenantContext,
+  ): Promise<ProductImportApprovalSummaryResponse | undefined> {
+    if (record.approvalId === undefined || this.linkedRepositories.approvalRepository === undefined) {
+      return undefined;
+    }
+
+    const approval = await this.linkedRepositories.approvalRepository.findById(tenant, record.approvalId);
+    if (approval === undefined) {
+      return undefined;
+    }
+
+    return {
+      id: approval.id,
+      status: approval.status,
+      proposalId: approval.proposalId,
+      requiresHumanApproval: approval.requiresHumanApproval,
+      executionEnabled: approval.executionEnabled,
+    };
+  }
+
+  private async findLinkedAudit(
+    record: ProductImportRecord,
+    tenant: TenantContext,
+  ): Promise<ProductImportAuditSummaryResponse | undefined> {
+    if (record.auditReference === undefined || this.linkedRepositories.auditRepository === undefined) {
+      return undefined;
+    }
+
+    const audit = await this.linkedRepositories.auditRepository.findById(tenant, record.auditReference);
+    if (audit === undefined) {
+      return undefined;
+    }
+
+    return {
+      id: audit.id,
+      eventType: audit.eventType,
+      entityId: audit.entityId,
+      ...(audit.status === undefined ? {} : { status: audit.status }),
+      occurredAt: audit.occurredAt,
     };
   }
 

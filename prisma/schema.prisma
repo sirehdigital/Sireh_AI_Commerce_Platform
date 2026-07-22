@@ -214,3 +214,94 @@ model ProductImport {
   @@index([productDraftId])
   @@index([parentImportId])
 }
+
+model ProductDraft {
+  id                 String   @id
+  tenantId           String
+  storeId            String
+  shopDomain         String?
+  status             String
+  version            Int
+  sourceType         String
+  sourceId           String
+  sourceReferenceKey String
+  supplierId         String?
+  supplierProductId  String?
+  idempotencyKey     String?
+  title              String
+  brand              String?
+  category           String?
+  productType        String?
+  currency           String?
+  riskLevel          String?
+  approvalId         String?
+  payload            Json
+  createdAt          DateTime
+  updatedAt          DateTime @updatedAt
+  archivedAt         DateTime?
+
+  @@unique([tenantId, storeId, idempotencyKey])
+  @@unique([tenantId, storeId, sourceReferenceKey])
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, storeId, sourceType])
+  @@index([tenantId, storeId, riskLevel])
+  @@index([approvalId])
+}
+
+model ApprovalRecord {
+  id                    String    @id
+  tenantId              String
+  storeId               String
+  shopDomain            String?
+  proposalId            String
+  workflowId            String?
+  title                 String
+  status                String
+  riskLevel             String
+  requestedBy           String
+  decidedBy             String?
+  decisionReason        String?
+  requiresHumanApproval Boolean
+  executionEnabled      Boolean
+  source                String
+  version               Int
+  payload               Json
+  createdAt             DateTime
+  requestedAt           DateTime
+  decidedAt             DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, storeId, proposalId])
+  @@index([tenantId, storeId, requestedAt])
+}
+
+model AuditRecord {
+  id            String   @id
+  tenantId      String
+  storeId       String
+  shopDomain    String?
+  eventType     String
+  entityType    String
+  entityId      String
+  actor         String
+  summary       String
+  source        String
+  sequence      Int
+  correlationId String?
+  activityType  String?
+  status        String?
+  details       Json
+  payload       Json
+  occurredAt    DateTime
+  recordedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, entityType, entityId])
+  @@index([tenantId, storeId, eventType])
+  @@index([tenantId, storeId, correlationId])
+  @@index([tenantId, storeId, occurredAt])
+}

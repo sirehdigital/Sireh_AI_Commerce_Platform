@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type RequestHandler } from "express";
 
 import { CreateProductDraftService } from "../../product-draft/application/services/create-product-draft.service.js";
-import { InMemoryProductDraftRepository } from "../../product-draft/infrastructure/repositories/in-memory-product-draft.repository.js";
+import { createPrismaProductDraftRepository } from "../../product-draft/infrastructure/repositories/prisma-product-draft.repository.js";
 import { DEFAULT_TENANT_CONTEXT, ProcessLocalTenantRegistry } from "../../saie/application/index.js";
-import { InMemoryApprovalRepository, InMemoryAuditRepository } from "../../saie/infrastructure/index.js";
+import { prismaApprovalRepository, prismaAuditRepository } from "../../saie/infrastructure/index.js";
 import { AppError } from "../../../shared/errors/app-error.js";
 import { AIProductImportPipelineService } from "../application/services/ai-product-import-pipeline.service.js";
 import { ProductImportApiService, type ProductImportStartRequest } from "../application/services/product-import-api.service.js";
@@ -70,23 +70,31 @@ export const createProductImportRouter = (options: ProductImportRouterOptions = 
 
 function createDefaultProductImportApiService(options: ProductImportRouterOptions): ProductImportApiService {
   const productImportRepository = options.productImportRepository ?? prismaProductImportRepository;
-  const draftRepository = new InMemoryProductDraftRepository();
   const now = options.now ?? (() => new Date());
   const idGenerator = options.idGenerator ?? randomUUID;
   const pipeline = new AIProductImportPipelineService({
     productImportRepository,
     draftService: new CreateProductDraftService({
-      repository: draftRepository,
+      repository: createPrismaProductDraftRepository(DEFAULT_TENANT_CONTEXT),
       idGenerator,
       clock: () => now().toISOString(),
     }),
-    approvalRepository: new InMemoryApprovalRepository([]),
-    auditRepository: new InMemoryAuditRepository(),
+    draftServiceFactory: (tenant) => new CreateProductDraftService({
+      repository: createPrismaProductDraftRepository(tenant),
+      idGenerator,
+      clock: () => now().toISOString(),
+    }),
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
     idGenerator,
     now,
   });
 
-  return new ProductImportApiService(pipeline, productImportRepository);
+  return new ProductImportApiService(pipeline, productImportRepository, {
+    productDraftRepositoryFactory: createPrismaProductDraftRepository,
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
+  });
 }
 
 const asyncHandler = (handler: RequestHandler): RequestHandler => (request, response, next) => {

@@ -73,7 +73,11 @@ const createTestApp = () => {
   const app = express();
   app.use(express.json());
   app.use("/api/product-imports", createProductImportRouter({
-    service: new ProductImportApiService(pipeline, productImportRepository),
+    service: new ProductImportApiService(pipeline, productImportRepository, {
+      productDraftRepositoryFactory: () => draftRepository,
+      approvalRepository,
+      auditRepository,
+    }),
   }));
   app.use(errorHandler);
 
@@ -105,6 +109,7 @@ interface ProductImportTestResponse {
   readonly idempotencyBehavior?: string;
   readonly idempotencyKey?: string;
   readonly parentImportId?: string;
+  readonly linkedResources?: unknown;
 }
 
 interface ProductImportListTestResponse {
@@ -183,7 +188,15 @@ describe("product import API routes", () => {
     const importId = successBody<ProductImportTestResponse>(created.body as unknown).data.importId;
 
     await request(app).get(`/api/product-imports/${importId}`).expect(200).expect((response) => {
-      expect(successBody<ProductImportTestResponse>(response.body as unknown).data).toMatchObject({ importId, idempotencyKey: "generic:get-api" });
+      expect(successBody<ProductImportTestResponse>(response.body as unknown).data).toMatchObject({
+        importId,
+        idempotencyKey: "generic:get-api",
+        linkedResources: {
+          productDraft: { status: "draft" },
+          approval: { status: "pending", executionEnabled: false },
+          audit: { status: "READY_FOR_REVIEW" },
+        },
+      });
     });
     await request(app).get(`/api/product-imports/${importId}/status`).expect(200).expect((response) => {
       expect(successBody<ProductImportTestResponse>(response.body as unknown).data).toMatchObject({ importId, status: "PENDING_APPROVAL" });

@@ -25,7 +25,7 @@ import {
   type CreateProductDraftService,
 } from "../../../product-draft/application/services/create-product-draft.service.js";
 import type { ProductDraft } from "../../../product-draft/domain/models/product-draft.model.js";
-import type { ApprovalRepository, AuditRepository, TenantContext } from "../../../saie/application/index.js";
+import type { ApprovalRecord, AuditRecord, TenantContext } from "../../../saie/application/index.js";
 import { createTenantContext, DEFAULT_TENANT_CONTEXT } from "../../../saie/application/index.js";
 import {
   AutoDsSupplierAdapter,
@@ -57,9 +57,10 @@ const optionalField = <Key extends string, Value>(
 
 export interface AIProductImportPipelineServiceDependencies {
   readonly draftService: CreateProductDraftService;
+  readonly draftServiceFactory?: (tenant: TenantContext) => CreateProductDraftService;
   readonly productImportRepository: ProductImportRepository;
-  readonly approvalRepository: ApprovalRepository;
-  readonly auditRepository: AuditRepository;
+  readonly approvalRepository: ProductImportApprovalRepository;
+  readonly auditRepository: ProductImportAuditRepository;
   readonly adapters?: readonly SupplierProductAdapter[];
   readonly now?: () => Date;
   readonly idGenerator?: () => string;
@@ -73,6 +74,16 @@ export interface AIProductImportPipelineServiceDependencies {
   readonly shopifyMapper?: ShopifyProductMapperService;
   readonly draftMapper?: ProductImportDraftMapper;
   readonly validator?: ProductImportInputValidator;
+}
+
+type MaybePromise<T> = T | Promise<T>;
+
+export interface ProductImportApprovalRepository {
+  readonly save: (context: TenantContext, approval: ApprovalRecord, expectedVersion?: number) => MaybePromise<ApprovalRecord>;
+}
+
+export interface ProductImportAuditRepository {
+  readonly append: (context: TenantContext, record: AuditRecord) => MaybePromise<AuditRecord>;
 }
 
 interface StageState {
@@ -152,7 +163,7 @@ export class AIProductImportPipelineService {
           throw AppError.internal("Product import duplicate lookup changed unexpectedly.");
         }
         const replayResult = this.toReplayResult(priorResult, importId, requestedAt);
-        this.appendAudit(tenant, replayResult, "Replayed existing product import result.", input.correlationId);
+        await this.appendAudit(tenant, replayResult, "Replayed existing product import result.", input.correlationId);
         return replayResult;
       }
 
@@ -191,7 +202,8 @@ export class AIProductImportPipelineService {
       };
       state.status = "ANALYZED";
 
-      state.draftResult = await this.dependencies.draftService.execute(
+      const draftService = this.dependencies.draftServiceFactory?.(tenant) ?? this.dependencies.draftService;
+      state.draftResult = await draftService.execute(
         this.draftMapper.map({
           importId,
           idempotencyKey,
@@ -215,7 +227,7 @@ export class AIProductImportPipelineService {
       );
       state.status = "DRAFT_CREATED";
 
-      const approvalId = this.createApproval(tenant, importId, state.draftResult.draft, input.requestedBy, requestedAt);
+      const approvalId = await this.createApproval(tenant, importId, state.draftResult.draft, input.requestedBy, requestedAt);
       const successResult = this.toSuccessResult({
         importId,
         supplierInput,
@@ -225,6 +237,7 @@ export class AIProductImportPipelineService {
         forced: input.force === true,
       });
       const savedResult = await this.dependencies.productImportRepository.save(successResult);
+      await this.appendAudit(tenant, savedResult, "Product import completed and is pending approval.", input.correlationId);
       await this.dependencies.productImportRepository.create(
         this.toPersistentRecord({
           tenant,
@@ -236,7 +249,6 @@ export class AIProductImportPipelineService {
           ...(existingRecord?.importId === undefined ? {} : { parentImportId: existingRecord.importId }),
         }),
       );
-      this.appendAudit(tenant, savedResult, "Product import completed and is pending approval.", input.correlationId);
 
       return savedResult;
     } catch (error: unknown) {
@@ -258,7 +270,7 @@ export class AIProductImportPipelineService {
           forced: input.force === true,
         }),
       );
-      this.appendAudit(tenant, failureResult, "Product import failed safely.", input.correlationId);
+      await this.appendAudit(tenant, failureResult, "Product import failed safely.", input.correlationId);
       return failureResult;
     }
   }
@@ -461,16 +473,16 @@ export class AIProductImportPipelineService {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-  private createApproval(
+  private async createApproval(
     tenant: TenantContext,
     importId: string,
     draft: ProductDraft,
     requestedBy: string,
     requestedAt: string,
-  ): string {
+  ): Promise<string> {
     const approvalId = `approval:${importId}`;
 
-    this.dependencies.approvalRepository.save(tenant, {
+    await this.dependencies.approvalRepository.save(tenant, {
       ...tenant,
       id: approvalId,
       proposalId: draft.id,
@@ -489,13 +501,13 @@ export class AIProductImportPipelineService {
     return approvalId;
   }
 
-  private appendAudit(
+  private async appendAudit(
     tenant: TenantContext,
     result: ProductImportPipelineResult,
     summary: string,
     correlationId: string | undefined,
-  ): void {
-    this.dependencies.auditRepository.append(tenant, {
+  ): Promise<void> {
+    await this.dependencies.auditRepository.append(tenant, {
       ...tenant,
       id: result.auditReference,
       eventType: "preview.agent-activity",
