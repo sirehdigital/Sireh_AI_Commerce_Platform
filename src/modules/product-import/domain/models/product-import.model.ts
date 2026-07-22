@@ -24,6 +24,14 @@ export type ProductImportPipelineStatus =
 
 export type ProductImportApprovalStatus = "PENDING_APPROVAL" | "NOT_CREATED";
 export type ProductImportIdempotencyBehavior = "CREATED" | "REPLAYED_EXISTING" | "FORCED_REIMPORT";
+export type ProductImportPersistenceStatus =
+  | "RECEIVED"
+  | "VALIDATING"
+  | "PROCESSING"
+  | "DRAFT_CREATED"
+  | "PENDING_APPROVAL"
+  | "COMPLETED"
+  | "FAILED";
 
 export interface SupplierProductImportImageInput {
   readonly url: string;
@@ -119,4 +127,53 @@ export interface ProductImportExecutionInput {
   readonly shopDomain?: `${string}.myshopify.com`;
   readonly correlationId?: string;
   readonly force?: boolean;
+}
+
+export interface ProductImportRecord {
+  readonly importId: string;
+  readonly tenantId: string;
+  readonly storeId: string;
+  readonly shopDomain?: `${string}.myshopify.com`;
+  readonly sourcePlatform: ProductImportSourcePlatform;
+  readonly externalProductId: string;
+  readonly sourceUrl?: string;
+  readonly supplierName?: string;
+  readonly status: ProductImportPersistenceStatus;
+  readonly pipelineStatus: ProductImportPipelineStatus;
+  readonly idempotencyKey: string;
+  readonly idempotencyBehavior: ProductImportIdempotencyBehavior;
+  readonly duplicate: boolean;
+  readonly forced: boolean;
+  readonly parentImportId?: string;
+  readonly productDraftId?: string;
+  readonly approvalId?: string;
+  readonly auditReference?: string;
+  readonly failureStage?: ProductImportPipelineStatus;
+  readonly failureCode?: string;
+  readonly failureMessage?: string;
+  readonly warnings: readonly string[];
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly resultSnapshot?: ProductImportPipelineResult;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+}
+
+export interface ProductImportListQuery {
+  readonly tenantId?: string;
+  readonly storeId?: string;
+  readonly shopDomain?: `${string}.myshopify.com`;
+  readonly status?: ProductImportPersistenceStatus;
+  readonly sourcePlatform?: ProductImportSourcePlatform;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface ProductImportListResult {
+  readonly items: readonly ProductImportRecord[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly hasNextPage: boolean;
+  readonly nextOffset?: number;
 }

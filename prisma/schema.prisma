@@ -176,3 +176,41 @@ model ShopifySyncRun {
   @@index([shopDomain])
   @@index([shopDomain, status])
 }
+
+model ProductImport {
+  importId            String   @id
+  tenantId            String
+  storeId             String
+  shopDomain          String?
+  sourcePlatform      String
+  externalProductId   String
+  sourceUrl           String?
+  supplierName        String?
+  status              String
+  pipelineStatus      String
+  idempotencyKey      String
+  idempotencyBehavior String
+  duplicate           Boolean  @default(false)
+  forced              Boolean  @default(false)
+  parentImportId      String?
+  productDraftId      String?
+  approvalId          String?
+  auditReference      String?
+  failureStage        String?
+  failureCode         String?
+  failureMessage      String?
+  warnings            Json
+  payload             Json
+  resultSnapshot      Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  completedAt         DateTime?
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, sourcePlatform, externalProductId])
+  @@index([tenantId, storeId, idempotencyKey])
+  @@index([status])
+  @@index([approvalId])
+  @@index([productDraftId])
+  @@index([parentImportId])
+}

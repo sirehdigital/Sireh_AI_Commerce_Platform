@@ -36,9 +36,11 @@ import {
 import type {
   ProductImportExecutionInput,
   ProductImportFailureReason,
+  ProductImportPersistenceStatus,
   ProductImportPipelineResult,
   ProductImportPipelineStatus,
   ProductImportSourcePlatform,
+  ProductImportRecord,
   SupplierProductImportInput,
 } from "../../domain/models/product-import.model.js";
 import type { ProductImportRepository } from "../../domain/repositories/product-import.repository.js";
@@ -134,10 +136,22 @@ export class AIProductImportPipelineService {
       const existingResult = this.dependencies.productImportRepository.findByIdentity({
         sourcePlatform: supplierInput.sourcePlatform,
         externalProductId: supplierInput.externalProductId,
+        tenantId: tenant.tenantId,
+        storeId: tenant.storeId,
+      });
+      const existingRecord = await this.dependencies.productImportRepository.findRecordByIdentity({
+        sourcePlatform: supplierInput.sourcePlatform,
+        externalProductId: supplierInput.externalProductId,
+        tenantId: tenant.tenantId,
+        storeId: tenant.storeId,
       });
 
-      if (existingResult !== undefined && input.force !== true) {
-        const replayResult = this.toReplayResult(existingResult, importId, requestedAt);
+      if ((await existingResult) !== undefined && input.force !== true) {
+        const priorResult = await existingResult;
+        if (priorResult === undefined) {
+          throw AppError.internal("Product import duplicate lookup changed unexpectedly.");
+        }
+        const replayResult = this.toReplayResult(priorResult, importId, requestedAt);
         this.appendAudit(tenant, replayResult, "Replayed existing product import result.", input.correlationId);
         return replayResult;
       }
@@ -210,7 +224,18 @@ export class AIProductImportPipelineService {
         approvalId,
         forced: input.force === true,
       });
-      const savedResult = this.dependencies.productImportRepository.save(successResult);
+      const savedResult = await this.dependencies.productImportRepository.save(successResult);
+      await this.dependencies.productImportRepository.create(
+        this.toPersistentRecord({
+          tenant,
+          requestedAt,
+          result: savedResult,
+          supplierInput,
+          input,
+          forced: input.force === true,
+          ...(existingRecord?.importId === undefined ? {} : { parentImportId: existingRecord.importId }),
+        }),
+      );
       this.appendAudit(tenant, savedResult, "Product import completed and is pending approval.", input.correlationId);
 
       return savedResult;
@@ -223,6 +248,16 @@ export class AIProductImportPipelineService {
         requestedAt,
         failureReason,
       });
+      await this.dependencies.productImportRepository.create(
+        this.toPersistentRecord({
+          tenant,
+          requestedAt,
+          result: failureResult,
+          ...(state.supplierInput === undefined ? {} : { supplierInput: state.supplierInput }),
+          input,
+          forced: input.force === true,
+        }),
+      );
       this.appendAudit(tenant, failureResult, "Product import failed safely.", input.correlationId);
       return failureResult;
     }
@@ -312,6 +347,118 @@ export class AIProductImportPipelineService {
       duplicate: false,
       failureReason: input.failureReason,
     };
+  }
+
+  private toPersistentRecord(input: {
+    readonly tenant: TenantContext;
+    readonly requestedAt: string;
+    readonly result: ProductImportPipelineResult;
+    readonly supplierInput?: SupplierProductImportInput;
+    readonly input: ProductImportExecutionInput;
+    readonly forced: boolean;
+    readonly parentImportId?: string;
+  }): ProductImportRecord {
+    const completedAt = input.result.finalPipelineStatus === "FAILED" ? undefined : this.now().toISOString();
+    const payload = this.toSafePayload(input.input.payload, input.supplierInput);
+
+    return {
+      importId: input.result.importId,
+      tenantId: input.tenant.tenantId,
+      storeId: input.tenant.storeId,
+      ...(input.tenant.shopDomain === undefined ? {} : { shopDomain: input.tenant.shopDomain }),
+      sourcePlatform: input.result.source.platform,
+      externalProductId: input.result.source.externalProductId,
+      ...(input.supplierInput?.supplierUrl === undefined ? {} : { sourceUrl: input.supplierInput.supplierUrl }),
+      ...(input.result.source.supplierName === undefined ? {} : { supplierName: input.result.source.supplierName }),
+      status: this.toPersistenceStatus(input.result.finalPipelineStatus),
+      pipelineStatus: input.result.finalPipelineStatus,
+      idempotencyKey: input.result.idempotencyKey,
+      idempotencyBehavior: input.result.idempotencyBehavior,
+      duplicate: input.result.duplicate,
+      forced: input.forced,
+      ...(input.parentImportId === undefined ? {} : { parentImportId: input.parentImportId }),
+      ...(input.result.shopifyDraft?.id === undefined ? {} : { productDraftId: input.result.shopifyDraft.id }),
+      ...(input.result.approvalId === undefined ? {} : { approvalId: input.result.approvalId }),
+      auditReference: input.result.auditReference,
+      ...(input.result.failureReason?.stage === undefined ? {} : { failureStage: input.result.failureReason.stage }),
+      ...(input.result.failureReason?.code === undefined ? {} : { failureCode: input.result.failureReason.code }),
+      ...(input.result.failureReason?.message === undefined ? {} : { failureMessage: input.result.failureReason.message }),
+      warnings: input.result.warnings,
+      payload,
+      resultSnapshot: input.result,
+      createdAt: input.requestedAt,
+      updatedAt: this.now().toISOString(),
+      ...(completedAt === undefined ? {} : { completedAt }),
+    };
+  }
+
+  private toPersistenceStatus(status: ProductImportPipelineStatus): ProductImportPersistenceStatus {
+    if (status === "DRAFT_CREATED") {
+      return "DRAFT_CREATED";
+    }
+
+    if (status === "PENDING_APPROVAL") {
+      return "PENDING_APPROVAL";
+    }
+
+    if (status === "FAILED") {
+      return "FAILED";
+    }
+
+    if (status === "NORMALIZED" || status === "ANALYZED") {
+      return "PROCESSING";
+    }
+
+    return "RECEIVED";
+  }
+
+  private toSafePayload(payload: unknown, supplierInput: SupplierProductImportInput | undefined): Readonly<Record<string, unknown>> {
+    if (supplierInput !== undefined) {
+      return {
+        externalProductId: supplierInput.externalProductId,
+        sourcePlatform: supplierInput.sourcePlatform,
+        supplierName: supplierInput.supplierName,
+        supplierUrl: supplierInput.supplierUrl,
+        title: supplierInput.title,
+        description: supplierInput.description,
+        brand: supplierInput.brand,
+        category: supplierInput.category,
+        productType: supplierInput.productType,
+        images: supplierInput.images.map((image) => ({ ...image })),
+        variants: supplierInput.variants.map((variant) => ({ ...variant })),
+        supplierPrice: supplierInput.supplierPrice,
+        compareAtPrice: supplierInput.compareAtPrice,
+        currency: supplierInput.currency,
+        inventory: supplierInput.inventory,
+        shippingOrigin: supplierInput.shippingOrigin,
+        shippingDestinations: [...supplierInput.shippingDestinations],
+        estimatedDelivery: supplierInput.estimatedDelivery,
+        tags: [...supplierInput.tags],
+        rawMetadata: this.redactSensitiveValues(supplierInput.rawMetadata),
+      };
+    }
+
+    return this.redactSensitiveValues(this.isRecord(payload) ? payload : { payloadType: typeof payload });
+  }
+
+  private redactSensitiveValues(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => {
+        if (/token|secret|password|credential|authorization|api[-_]?key/iu.test(key)) {
+          return [key, "[REDACTED]"];
+        }
+
+        if (this.isRecord(entry)) {
+          return [key, this.redactSensitiveValues(entry)];
+        }
+
+        return [key, entry];
+      }),
+    );
+  }
+
+  private isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
   private createApproval(
