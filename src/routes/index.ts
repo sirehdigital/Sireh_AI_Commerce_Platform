@@ -8,6 +8,7 @@
 
 import { Router } from "express";
 import { productWriterRouter } from "../ai/product-writer/product-writer.routes.js";
+import { autoDSRouter } from "../modules/autods/api/index.js";
 import { productImportRouter } from "../modules/product-import/api/index.js";
 import { productMediaRouter } from "../modules/product-media/api/index.js";
 import { saieApiRouter } from "../modules/saie/api/index.js";
@@ -23,6 +24,7 @@ appRouter.get("/", (_req, res) => {
 });
 
 appRouter.use("/api/v1/product", productWriterRouter);
+appRouter.use("/api/autods", autoDSRouter);
 appRouter.use("/api/product-imports", productImportRouter);
 appRouter.use("/api/product-media", productMediaRouter);
 appRouter.use("/api/saie", saieApiRouter);

@@ -377,3 +377,99 @@ model ProductMediaAsset {
   @@index([tenantId, storeId, status])
   @@index([providerReference])
 }
+
+model SupplierConnection {
+  id                   String    @id
+  tenantId             String
+  storeId              String
+  shopDomain           String?
+  supplierProvider     String
+  status               String
+  credentialsReference Json?
+  capabilities         Json
+  healthSnapshot       Json
+  connectedAt          DateTime?
+  disconnectedAt       DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([tenantId, storeId, supplierProvider])
+  @@index([tenantId, storeId])
+  @@index([supplierProvider, status])
+}
+
+model SupplierImportJob {
+  id                  String    @id
+  tenantId            String
+  storeId             String
+  shopDomain          String?
+  supplierProvider    String
+  status              String
+  idempotencyKey      String
+  requestedBy         String
+  force               Boolean   @default(false)
+  productReferenceIds Json
+  productImportIds    Json
+  warnings            Json
+  failure             Json?
+  auditReference      String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  completedAt         DateTime?
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, supplierProvider])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, storeId, idempotencyKey])
+  @@index([supplierProvider, status])
+}
+
+model SupplierSyncJob {
+  id                  String    @id
+  tenantId            String
+  storeId             String
+  shopDomain          String?
+  supplierProvider    String
+  syncType            String
+  status              String
+  idempotencyKey      String
+  productReferenceIds Json
+  warnings            Json
+  failure             Json?
+  auditReference      String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  completedAt         DateTime?
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, supplierProvider])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, storeId, idempotencyKey])
+  @@index([supplierProvider, status])
+}
+
+model SupplierProductReference {
+  id                String    @id
+  tenantId          String
+  storeId           String
+  shopDomain        String?
+  supplierProvider  String
+  externalProductId String
+  title             String
+  brand             String?
+  category          String?
+  productType       String?
+  inventorySnapshot Json?
+  pricingSnapshot   Json
+  mediaReferences   Json
+  shippingProfile   Json
+  rawPayload        Json?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, storeId, supplierProvider, externalProductId])
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, supplierProvider])
+  @@index([tenantId, storeId, supplierProvider, title])
+}
