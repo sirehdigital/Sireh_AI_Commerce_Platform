@@ -62,3 +62,7 @@ Desktop.ini
 # Temporary files
 tmp/
 temp/
+
+# Local Prisma databases
+prisma/*.db
+prisma/*.db-journal
