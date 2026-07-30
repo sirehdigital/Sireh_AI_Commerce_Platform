@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type RequestHandler } from "express";
 
 import { AppError } from "../../../shared/errors/app-error.js";
+import type { ProductDraftRepository } from "../../product-draft/domain/repositories/product-draft.repository.js";
+import { createPrismaProductDraftRepository } from "../../product-draft/infrastructure/repositories/prisma-product-draft.repository.js";
 import { DEFAULT_TENANT_CONTEXT, ProcessLocalTenantRegistry } from "../../saie/application/index.js";
 import { prismaApprovalRepository, prismaAuditRepository } from "../../saie/infrastructure/index.js";
 import {
   StorefrontFoundationService,
+  StorefrontPlanningService,
   type CreateStorefrontFoundationProjectInput,
   type CreateStorefrontProfileInput,
 } from "../application/index.js";
@@ -29,7 +32,9 @@ type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };
 
 export interface StorefrontRouterOptions {
   readonly service?: StorefrontFoundationService;
+  readonly planningService?: StorefrontPlanningService;
   readonly repository?: StorefrontRepository;
+  readonly productDraftRepository?: ProductDraftRepository;
   readonly idGenerator?: () => string;
   readonly now?: () => Date;
 }
@@ -37,6 +42,7 @@ export interface StorefrontRouterOptions {
 export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): Router => {
   const router = Router();
   const service = options.service ?? createDefaultService(options);
+  const planningService = options.planningService ?? createDefaultPlanningService(options);
 
   router.post("/profiles", asyncHandler(async (request, response) => {
     const profile = await service.createProfile(parseCreateProfileInput(request), resolveTenant(request));
@@ -81,6 +87,26 @@ export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): R
     });
   }));
 
+  router.post("/projects/:projectId/plan", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const project = await planningService.planProject({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(project.status === "FAILED" ? 202 : 200).json({ success: true, data: project });
+  }));
+
+  router.get("/projects/:projectId/plan", asyncHandler(async (request, response) => {
+    const plan = await planningService.getPlan(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: plan });
+  }));
+
+  router.get("/projects/:projectId/planning-report", asyncHandler(async (request, response) => {
+    const report = await planningService.getPlanningReport(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: report });
+  }));
+
   router.patch("/projects/:projectId/status", asyncHandler(async (request, response) => {
     const project = await service.transitionProject(parseTransitionInput(request), resolveTenant(request));
     response.status(200).json({ success: true, data: project });
@@ -100,6 +126,19 @@ function createDefaultService(options: StorefrontRouterOptions): StorefrontFound
   const repository = options.repository ?? prismaStorefrontRepository;
   return new StorefrontFoundationService({
     repository,
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
+    now,
+    idGenerator,
+  });
+}
+
+function createDefaultPlanningService(options: StorefrontRouterOptions): StorefrontPlanningService {
+  const now = options.now ?? (() => new Date());
+  const idGenerator = options.idGenerator ?? randomUUID;
+  return new StorefrontPlanningService({
+    storefrontRepository: options.repository ?? prismaStorefrontRepository,
+    productDraftRepository: options.productDraftRepository ?? createPrismaProductDraftRepository(DEFAULT_TENANT_CONTEXT),
     approvalRepository: prismaApprovalRepository,
     auditRepository: prismaAuditRepository,
     now,

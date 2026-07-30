@@ -3,8 +3,10 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { errorHandler } from "../../../middleware/error-handler.js";
+import type { ProductDraft } from "../../product-draft/domain/models/product-draft.model.js";
+import { InMemoryProductDraftRepository } from "../../product-draft/infrastructure/repositories/in-memory-product-draft.repository.js";
 import { InMemoryApprovalRepository, InMemoryAuditRepository } from "../../saie/infrastructure/index.js";
-import { StorefrontFoundationService } from "../application/index.js";
+import { StorefrontFoundationService, StorefrontPlanningService } from "../application/index.js";
 import { InMemoryStorefrontRepository } from "../infrastructure/index.js";
 import { createStorefrontRouter } from "./storefront.routes.js";
 
@@ -24,6 +26,8 @@ const createIdGenerator = (): (() => string) => {
 
 const createApp = () => {
   const repository = new InMemoryStorefrontRepository();
+  const productDraftRepository = new InMemoryProductDraftRepository();
+  void productDraftRepository.save(productDraft("draft-1", "Velvet Glow"));
   const service = new StorefrontFoundationService({
     repository,
     approvalRepository: new InMemoryApprovalRepository([]),
@@ -31,12 +35,45 @@ const createApp = () => {
     now: () => new Date("2026-07-30T10:00:00.000Z"),
     idGenerator: createIdGenerator(),
   });
+  const planningService = new StorefrontPlanningService({
+    storefrontRepository: repository,
+    productDraftRepository,
+    approvalRepository: new InMemoryApprovalRepository([]),
+    auditRepository: new InMemoryAuditRepository(),
+    now: () => new Date("2026-07-30T10:00:00.000Z"),
+    idGenerator: createIdGenerator(),
+  });
   const app = express();
   app.use(express.json());
-  app.use("/api/storefront", createStorefrontRouter({ service }));
+  app.use("/api/storefront", createStorefrontRouter({ service, planningService }));
   app.use(errorHandler);
   return { app };
 };
+
+const productDraft = (id: string, title: string): ProductDraft => ({
+  id,
+  status: "approved",
+  version: 1,
+  source: { sourceType: "import", sourceId: id, importedAt: "2026-07-30T10:00:00.000Z" },
+  title,
+  description: `${title} is approved for storefront planning.`,
+  brand: "Lumora",
+  category: "Body Care",
+  productType: "Body Lotion",
+  tags: ["premium", "natural"],
+  targetMarkets: ["US"],
+  images: [{ id: `${id}-image`, sourceUrl: `https://images.test/${id}.jpg`, position: 1, selected: true, primary: true }],
+  variants: [{
+    id: `${id}-variant`,
+    title: "Default Title",
+    options: [{ name: "Title", value: "Default Title" }],
+    supplierPrice: { amount: 8, currency: "USD" },
+    sellingPrice: { amount: 24, currency: "USD" },
+    available: true,
+  }],
+  createdAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:00.000Z",
+});
 
 interface SuccessBody<TData> {
   readonly success: true;
@@ -134,5 +171,30 @@ describe("storefront foundation API routes", () => {
       .set("x-saie-tenant-id", "tenant-a")
       .set("x-saie-store-id", "store-a")
       .expect(200);
+  });
+
+  it("plans projects and returns the stored planning report", async () => {
+    const { app } = createApp();
+    const profile = await request(app).post("/api/storefront/profiles").send(profilePayload).expect(201);
+    const profileId = successBody<{ readonly id: string }>(profile.body as unknown).data.id;
+    const project = await request(app).post("/api/storefront/projects").send({ profileId, selectedProductDraftIds: ["draft-1"] }).expect(201);
+    const projectId = successBody<StorefrontProjectResponse>(project.body as unknown).data.id;
+
+    await request(app).post(`/api/storefront/projects/${projectId}/plan`).send({ requestedBy: "merchant" }).expect(200).expect((response) => {
+      expect(successBody<StorefrontProjectResponse>(response.body as unknown).data).toMatchObject({
+        id: projectId,
+        status: "PENDING_REVIEW",
+      });
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/plan`).expect(200).expect((response) => {
+      expect(successBody<{ readonly homepage: { readonly sections: readonly { readonly type: string }[] } }>(response.body as unknown).data.homepage.sections.map((section) => section.type)).toContain("hero-banner");
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/planning-report`).expect(200).expect((response) => {
+      const report = successBody<{ readonly score: { readonly overall: number }; readonly validation: { readonly requiresReview: boolean } }>(response.body as unknown).data;
+      expect(report).toMatchObject({
+        validation: { requiresReview: true },
+      });
+      expect(typeof report.score.overall).toBe("number");
+    });
   });
 });
