@@ -12,6 +12,7 @@ import { autoDSRouter } from "../modules/autods/api/index.js";
 import { productImportRouter } from "../modules/product-import/api/index.js";
 import { productMediaRouter } from "../modules/product-media/api/index.js";
 import { saieApiRouter } from "../modules/saie/api/index.js";
+import { storefrontRouter } from "../modules/storefront/api/index.js";
 
 export const appRouter = Router();
 
@@ -28,3 +29,4 @@ appRouter.use("/api/autods", autoDSRouter);
 appRouter.use("/api/product-imports", productImportRouter);
 appRouter.use("/api/product-media", productMediaRouter);
 appRouter.use("/api/saie", saieApiRouter);
+appRouter.use("/api/storefront", storefrontRouter);

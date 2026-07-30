@@ -473,3 +473,96 @@ model SupplierProductReference {
   @@index([tenantId, storeId, supplierProvider])
   @@index([tenantId, storeId, supplierProvider, title])
 }
+
+model StorefrontProfile {
+  id          String   @id
+  tenantId    String
+  storeId     String
+  shopDomain  String?
+  version     Int
+  brandName   String
+  payload     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, brandName])
+}
+
+model StorefrontProject {
+  id                      String    @id
+  tenantId                String
+  storeId                 String
+  shopDomain              String?
+  status                  String
+  mode                    String
+  brandName               String
+  themeTargetReference    String
+  selectedProductDraftIds Json
+  locale                  String
+  markets                 Json
+  idempotencyKey          String
+  planSnapshot            Json
+  validationSnapshot      Json
+  qualitySnapshot         Json
+  approvalId              String?
+  correlationId           String?
+  parentProjectId         String?
+  failureStage            String?
+  failureCode             String?
+  failureMessage          String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  completedAt             DateTime?
+
+  artifacts StorefrontArtifact[]
+  previews   StorefrontPreview[]
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, storeId, locale])
+  @@index([tenantId, storeId, idempotencyKey])
+  @@index([themeTargetReference])
+  @@index([parentProjectId])
+  @@index([createdAt])
+}
+
+model StorefrontArtifact {
+  id                  String   @id
+  storefrontProjectId String
+  artifactType        String
+  path                String
+  contentHash         String
+  format              String
+  status              String
+  contentSnapshot     Json
+  sourceReferences    Json
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  project StorefrontProject @relation(fields: [storefrontProjectId], references: [id], onDelete: Cascade)
+
+  @@index([storefrontProjectId])
+  @@index([artifactType])
+  @@index([status])
+}
+
+model StorefrontPreview {
+  id                          String   @id
+  storefrontProjectId          String
+  planSnapshot                 Json
+  generatedArtifactReferences  Json
+  themeTarget                  Json
+  selectedProductDraftIds      Json
+  qualityReport                Json
+  validationReport             Json
+  previewStatus                String
+  previewUrl                   String?
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+
+  project StorefrontProject @relation(fields: [storefrontProjectId], references: [id], onDelete: Cascade)
+
+  @@index([storefrontProjectId])
+  @@index([previewStatus])
+}
