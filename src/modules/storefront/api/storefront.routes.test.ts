@@ -6,7 +6,7 @@ import { errorHandler } from "../../../middleware/error-handler.js";
 import type { ProductDraft } from "../../product-draft/domain/models/product-draft.model.js";
 import { InMemoryProductDraftRepository } from "../../product-draft/infrastructure/repositories/in-memory-product-draft.repository.js";
 import { InMemoryApprovalRepository, InMemoryAuditRepository } from "../../saie/infrastructure/index.js";
-import { StorefrontFoundationService, StorefrontPlanningService } from "../application/index.js";
+import { StorefrontFoundationService, StorefrontPlanningService, ThemeMappingService } from "../application/index.js";
 import { InMemoryStorefrontRepository } from "../infrastructure/index.js";
 import { createStorefrontRouter } from "./storefront.routes.js";
 
@@ -43,9 +43,16 @@ const createApp = () => {
     now: () => new Date("2026-07-30T10:00:00.000Z"),
     idGenerator: createIdGenerator(),
   });
+  const themeMappingService = new ThemeMappingService({
+    storefrontRepository: repository,
+    approvalRepository: new InMemoryApprovalRepository([]),
+    auditRepository: new InMemoryAuditRepository(),
+    now: () => new Date("2026-07-30T10:00:00.000Z"),
+    idGenerator: createIdGenerator(),
+  });
   const app = express();
   app.use(express.json());
-  app.use("/api/storefront", createStorefrontRouter({ service, planningService }));
+  app.use("/api/storefront", createStorefrontRouter({ service, planningService, themeMappingService }));
   app.use(errorHandler);
   return { app };
 };
@@ -195,6 +202,29 @@ describe("storefront foundation API routes", () => {
         validation: { requiresReview: true },
       });
       expect(typeof report.score.overall).toBe("number");
+    });
+  });
+
+  it("creates and reads Shopify theme mapping preview artifacts", async () => {
+    const { app } = createApp();
+    const profile = await request(app).post("/api/storefront/profiles").send(profilePayload).expect(201);
+    const profileId = successBody<{ readonly id: string }>(profile.body as unknown).data.id;
+    const project = await request(app).post("/api/storefront/projects").send({ profileId, selectedProductDraftIds: ["draft-1"] }).expect(201);
+    const projectId = successBody<StorefrontProjectResponse>(project.body as unknown).data.id;
+    await request(app).post(`/api/storefront/projects/${projectId}/plan`).send({ requestedBy: "merchant" }).expect(200);
+
+    await request(app).post(`/api/storefront/projects/${projectId}/theme-mapping`).send({ requestedBy: "merchant" }).expect(200).expect((response) => {
+      const result = successBody<{ readonly project: { readonly status: string }; readonly previewArtifacts: readonly { readonly path: string }[] }>(response.body as unknown).data;
+      expect(result.project.status).toBe("PENDING_REVIEW");
+      expect(result.previewArtifacts.map((artifact) => artifact.path)).toEqual(expect.arrayContaining(["theme-preview/theme-mapping.json", "theme-preview/homepage.json"]));
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/theme-mapping`).expect(200).expect((response) => {
+      expect(successBody<{ readonly homepage: { readonly path: string } }>(response.body as unknown).data.homepage.path).toBe("templates/index.json");
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/theme-preview`).expect(200).expect((response) => {
+      expect(successBody<{ readonly preview: { readonly previewUrl: string | null }; readonly artifacts: readonly unknown[] }>(response.body as unknown).data).toMatchObject({
+        preview: { previewUrl: null },
+      });
     });
   });
 });
