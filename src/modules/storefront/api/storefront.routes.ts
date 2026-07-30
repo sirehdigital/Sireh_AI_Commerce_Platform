@@ -8,6 +8,7 @@ import { createPrismaProductDraftRepository } from "../../product-draft/infrastr
 import { DEFAULT_TENANT_CONTEXT, ProcessLocalTenantRegistry } from "../../saie/application/index.js";
 import { prismaApprovalRepository, prismaAuditRepository } from "../../saie/infrastructure/index.js";
 import {
+  ArtifactPreviewService,
   StorefrontFoundationService,
   StorefrontPlanningService,
   ThemeMappingService,
@@ -35,6 +36,7 @@ export interface StorefrontRouterOptions {
   readonly service?: StorefrontFoundationService;
   readonly planningService?: StorefrontPlanningService;
   readonly themeMappingService?: ThemeMappingService;
+  readonly artifactPreviewService?: ArtifactPreviewService;
   readonly repository?: StorefrontRepository;
   readonly productDraftRepository?: ProductDraftRepository;
   readonly idGenerator?: () => string;
@@ -46,6 +48,7 @@ export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): R
   const service = options.service ?? createDefaultService(options);
   const planningService = options.planningService ?? createDefaultPlanningService(options);
   const themeMappingService = options.themeMappingService ?? createDefaultThemeMappingService(options);
+  const artifactPreviewService = options.artifactPreviewService ?? createDefaultArtifactPreviewService(options);
 
   router.post("/profiles", asyncHandler(async (request, response) => {
     const profile = await service.createProfile(parseCreateProfileInput(request), resolveTenant(request));
@@ -130,6 +133,31 @@ export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): R
     response.status(200).json({ success: true, data: preview });
   }));
 
+  router.post("/projects/:projectId/artifacts", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const result = await artifactPreviewService.generatePreview({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(result.generation.validation.errors.length === 0 ? 200 : 202).json({ success: true, data: result });
+  }));
+
+  router.get("/projects/:projectId/artifacts", asyncHandler(async (request, response) => {
+    const artifacts = await artifactPreviewService.listArtifacts(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: artifacts });
+  }));
+
+  router.get("/projects/:projectId/artifact-bundle", asyncHandler(async (request, response) => {
+    const bundle = await artifactPreviewService.getBundle(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: bundle });
+  }));
+
+  router.get("/projects/:projectId/artifact-validation", asyncHandler(async (request, response) => {
+    const validation = await artifactPreviewService.getValidation(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: validation });
+  }));
+
   router.patch("/projects/:projectId/status", asyncHandler(async (request, response) => {
     const project = await service.transitionProject(parseTransitionInput(request), resolveTenant(request));
     response.status(200).json({ success: true, data: project });
@@ -173,6 +201,18 @@ function createDefaultThemeMappingService(options: StorefrontRouterOptions): The
   const now = options.now ?? (() => new Date());
   const idGenerator = options.idGenerator ?? randomUUID;
   return new ThemeMappingService({
+    storefrontRepository: options.repository ?? prismaStorefrontRepository,
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
+    now,
+    idGenerator,
+  });
+}
+
+function createDefaultArtifactPreviewService(options: StorefrontRouterOptions): ArtifactPreviewService {
+  const now = options.now ?? (() => new Date());
+  const idGenerator = options.idGenerator ?? randomUUID;
+  return new ArtifactPreviewService({
     storefrontRepository: options.repository ?? prismaStorefrontRepository,
     approvalRepository: prismaApprovalRepository,
     auditRepository: prismaAuditRepository,

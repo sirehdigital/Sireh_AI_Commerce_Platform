@@ -6,7 +6,7 @@ import { errorHandler } from "../../../middleware/error-handler.js";
 import type { ProductDraft } from "../../product-draft/domain/models/product-draft.model.js";
 import { InMemoryProductDraftRepository } from "../../product-draft/infrastructure/repositories/in-memory-product-draft.repository.js";
 import { InMemoryApprovalRepository, InMemoryAuditRepository } from "../../saie/infrastructure/index.js";
-import { StorefrontFoundationService, StorefrontPlanningService, ThemeMappingService } from "../application/index.js";
+import { ArtifactPreviewService, StorefrontFoundationService, StorefrontPlanningService, ThemeMappingService } from "../application/index.js";
 import { InMemoryStorefrontRepository } from "../infrastructure/index.js";
 import { createStorefrontRouter } from "./storefront.routes.js";
 
@@ -50,9 +50,16 @@ const createApp = () => {
     now: () => new Date("2026-07-30T10:00:00.000Z"),
     idGenerator: createIdGenerator(),
   });
+  const artifactPreviewService = new ArtifactPreviewService({
+    storefrontRepository: repository,
+    approvalRepository: new InMemoryApprovalRepository([]),
+    auditRepository: new InMemoryAuditRepository(),
+    now: () => new Date("2026-07-30T10:00:00.000Z"),
+    idGenerator: createIdGenerator(),
+  });
   const app = express();
   app.use(express.json());
-  app.use("/api/storefront", createStorefrontRouter({ service, planningService, themeMappingService }));
+  app.use("/api/storefront", createStorefrontRouter({ service, planningService, themeMappingService, artifactPreviewService }));
   app.use(errorHandler);
   return { app };
 };
@@ -224,6 +231,38 @@ describe("storefront foundation API routes", () => {
     await request(app).get(`/api/storefront/projects/${projectId}/theme-preview`).expect(200).expect((response) => {
       expect(successBody<{ readonly preview: { readonly previewUrl: string | null }; readonly artifacts: readonly unknown[] }>(response.body as unknown).data).toMatchObject({
         preview: { previewUrl: null },
+      });
+    });
+  });
+
+  it("creates and reads theme artifact preview bundles", async () => {
+    const { app } = createApp();
+    const profile = await request(app).post("/api/storefront/profiles").send(profilePayload).expect(201);
+    const profileId = successBody<{ readonly id: string }>(profile.body as unknown).data.id;
+    const project = await request(app).post("/api/storefront/projects").send({ profileId, selectedProductDraftIds: ["draft-1"] }).expect(201);
+    const projectId = successBody<StorefrontProjectResponse>(project.body as unknown).data.id;
+    await request(app).post(`/api/storefront/projects/${projectId}/plan`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/theme-mapping`).send({ requestedBy: "merchant" }).expect(200);
+
+    await request(app).post(`/api/storefront/projects/${projectId}/artifacts`).send({ requestedBy: "merchant" }).expect(200).expect((response) => {
+      const result = successBody<{ readonly project: { readonly status: string }; readonly generation: { readonly bundle: { readonly artifactCount: number; readonly bundleHash: string } } }>(response.body as unknown).data;
+      expect(result.project.status).toBe("PENDING_REVIEW");
+      expect(result.generation.bundle.artifactCount).toBe(14);
+      expect(result.generation.bundle.bundleHash).toHaveLength(64);
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/artifacts`).expect(200).expect((response) => {
+      expect(successBody<readonly { readonly path: string }[]>(response.body as unknown).data.map((artifact) => artifact.path)).toEqual(expect.arrayContaining(["theme-preview/manifest.json", "theme-preview/bundle.json"]));
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/artifact-bundle`).expect(200).expect((response) => {
+      expect(successBody<{ readonly artifactValidationScore: number; readonly artifactCount: number }>(response.body as unknown).data).toMatchObject({
+        artifactValidationScore: 100,
+        artifactCount: 14,
+      });
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/artifact-validation`).expect(200).expect((response) => {
+      expect(successBody<{ readonly errors: readonly unknown[]; readonly requiresHumanReview: boolean }>(response.body as unknown).data).toMatchObject({
+        errors: [],
+        requiresHumanReview: true,
       });
     });
   });
