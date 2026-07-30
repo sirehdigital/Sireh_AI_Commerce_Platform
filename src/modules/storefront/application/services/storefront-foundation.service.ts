@@ -86,6 +86,7 @@ const FOUNDATION_STATUSES = new Set<StorefrontProjectStatus>([
   "APPROVED",
   "REJECTED",
   "READY_FOR_DEPLOYMENT",
+  "READY_FOR_RELEASE",
   "FAILED",
   "CANCELLED",
 ]);
@@ -101,6 +102,7 @@ const ALLOWED_TRANSITIONS: Readonly<Record<StorefrontProjectStatus, readonly Sto
   APPROVED: ["READY_FOR_DEPLOYMENT"],
   REJECTED: ["PLANNING", "CANCELLED"],
   READY_FOR_DEPLOYMENT: [],
+  READY_FOR_RELEASE: [],
   DEPLOYING: [],
   DEPLOYED: [],
   FAILED: [],

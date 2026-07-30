@@ -11,6 +11,7 @@ export type StorefrontProjectStatus =
   | "APPROVED"
   | "REJECTED"
   | "READY_FOR_DEPLOYMENT"
+  | "READY_FOR_RELEASE"
   | "DEPLOYING"
   | "DEPLOYED"
   | "FAILED"

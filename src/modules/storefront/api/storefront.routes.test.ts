@@ -6,7 +6,17 @@ import { errorHandler } from "../../../middleware/error-handler.js";
 import type { ProductDraft } from "../../product-draft/domain/models/product-draft.model.js";
 import { InMemoryProductDraftRepository } from "../../product-draft/infrastructure/repositories/in-memory-product-draft.repository.js";
 import { InMemoryApprovalRepository, InMemoryAuditRepository } from "../../saie/infrastructure/index.js";
-import { ArtifactPreviewService, StorefrontFoundationService, StorefrontPlanningService, ThemeMappingService } from "../application/index.js";
+import {
+  ArtifactPreviewService,
+  ProductionLaunchService,
+  SafeDeploymentService,
+  StorefrontFoundationService,
+  StorefrontPlanningService,
+  ThemeMappingService,
+  type ProductionDeploymentVerifier,
+} from "../application/index.js";
+import type { ShopifyThemeGateway, ShopifyThemeGatewayResult } from "../application/gateways/index.js";
+import type { StorefrontArtifact, StorefrontProject } from "../domain/index.js";
 import { InMemoryStorefrontRepository } from "../infrastructure/index.js";
 import { createStorefrontRouter } from "./storefront.routes.js";
 
@@ -23,6 +33,36 @@ const createIdGenerator = (): (() => string) => {
   let id = 0;
   return () => `api-id-${(id += 1).toString().padStart(3, "0")}`;
 };
+
+class ApiDeploymentVerifier implements ProductionDeploymentVerifier {
+  public verify(input: { readonly project: StorefrontProject; readonly artifacts: readonly StorefrontArtifact[] }) {
+    return {
+      ok: input.artifacts.some((artifact) => artifact.path === "theme-preview/bundle.json"),
+      deploymentReference: `deployment:${input.project.id}`,
+      previousActiveThemeId: "theme-previous",
+      targetThemeId: "theme-draft-validated",
+      compatibilityPassed: true,
+      validationPassed: true,
+      warnings: [],
+    };
+  }
+}
+
+class ApiActivationGateway implements ShopifyThemeGateway {
+  public readonly id = "api-activation-gateway";
+  public generateArtifacts(): Promise<ShopifyThemeGatewayResult> {
+    return Promise.resolve({ ok: true, previewUrl: null, artifactReferences: [], warnings: [] });
+  }
+  public activateTheme(): Promise<ShopifyThemeGatewayResult> {
+    return Promise.resolve({ ok: true, previewUrl: null, artifactReferences: ["theme-draft-validated"], warnings: [] });
+  }
+  public publishProducts(): Promise<ShopifyThemeGatewayResult> {
+    return Promise.resolve({ ok: false, previewUrl: null, artifactReferences: [], warnings: [], failureCode: "NOT_USED" });
+  }
+  public uploadMedia(): Promise<ShopifyThemeGatewayResult> {
+    return Promise.resolve({ ok: false, previewUrl: null, artifactReferences: [], warnings: [], failureCode: "NOT_USED" });
+  }
+}
 
 const createApp = () => {
   const repository = new InMemoryStorefrontRepository();
@@ -57,9 +97,25 @@ const createApp = () => {
     now: () => new Date("2026-07-30T10:00:00.000Z"),
     idGenerator: createIdGenerator(),
   });
+  const safeDeploymentService = new SafeDeploymentService({
+    storefrontRepository: repository,
+    approvalRepository: new InMemoryApprovalRepository([]),
+    auditRepository: new InMemoryAuditRepository(),
+    now: () => new Date("2026-07-30T10:00:00.000Z"),
+    idGenerator: createIdGenerator(),
+  });
+  const productionLaunchService = new ProductionLaunchService({
+    storefrontRepository: repository,
+    approvalRepository: new InMemoryApprovalRepository([]),
+    auditRepository: new InMemoryAuditRepository(),
+    deploymentVerifier: new ApiDeploymentVerifier(),
+    shopifyThemeGateway: new ApiActivationGateway(),
+    now: () => new Date("2026-07-30T10:00:00.000Z"),
+    idGenerator: createIdGenerator(),
+  });
   const app = express();
   app.use(express.json());
-  app.use("/api/storefront", createStorefrontRouter({ service, planningService, themeMappingService, artifactPreviewService }));
+  app.use("/api/storefront", createStorefrontRouter({ service, planningService, themeMappingService, artifactPreviewService, safeDeploymentService, productionLaunchService }));
   app.use(errorHandler);
   return { app };
 };
@@ -264,6 +320,74 @@ describe("storefront foundation API routes", () => {
         errors: [],
         requiresHumanReview: true,
       });
+    });
+  });
+
+  it("creates release metadata, reads history, and rolls back through production launch routes", async () => {
+    const { app } = createApp();
+    const profile = await request(app).post("/api/storefront/profiles").send(profilePayload).expect(201);
+    const profileId = successBody<{ readonly id: string }>(profile.body as unknown).data.id;
+    const project = await request(app).post("/api/storefront/projects").send({ profileId, selectedProductDraftIds: ["draft-1"] }).expect(201);
+    const projectId = successBody<StorefrontProjectResponse>(project.body as unknown).data.id;
+    await request(app).post(`/api/storefront/projects/${projectId}/plan`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/theme-mapping`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/artifacts`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/deploy`).send({ requestedBy: "merchant" }).expect(200);
+
+    const releaseResponse = await request(app).post(`/api/storefront/projects/${projectId}/release`).send({ releaseNotes: ["Launch Lumora storefront."] }).expect(200);
+    const release = successBody<{ readonly release: { readonly releaseId: string; readonly status: string }; readonly summary: { readonly health: { readonly themeActive: boolean } } }>(releaseResponse.body as unknown).data;
+    expect(release.release.status).toBe("ACTIVATED");
+    expect(release.summary.health.themeActive).toBe(true);
+    await request(app).get(`/api/storefront/projects/${projectId}/release`).expect(200).expect((response) => {
+      expect(successBody<{ readonly releaseId: string; readonly status: string }>(response.body as unknown).data).toMatchObject({
+        releaseId: release.release.releaseId,
+        status: "ACTIVATED",
+      });
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/release-history`).expect(200).expect((response) => {
+      expect(successBody<readonly { readonly releaseId: string }[]>(response.body as unknown).data).toHaveLength(1);
+    });
+    await request(app).post(`/api/storefront/projects/${projectId}/rollback`).send({ releaseId: release.release.releaseId }).expect(200).expect((response) => {
+      expect(successBody<{ readonly status: string; readonly restoredThemeId: string }>(response.body as unknown).data).toMatchObject({
+        status: "EXECUTED",
+        restoredThemeId: "theme-previous",
+      });
+    });
+  });
+
+  it("creates safe deployment metadata and exposes deployment health routes", async () => {
+    const { app } = createApp();
+    const profile = await request(app).post("/api/storefront/profiles").send(profilePayload).expect(201);
+    const profileId = successBody<{ readonly id: string }>(profile.body as unknown).data.id;
+    const project = await request(app).post("/api/storefront/projects").send({ profileId, selectedProductDraftIds: ["draft-1"] }).expect(201);
+    const projectId = successBody<StorefrontProjectResponse>(project.body as unknown).data.id;
+    await request(app).post(`/api/storefront/projects/${projectId}/plan`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/theme-mapping`).send({ requestedBy: "merchant" }).expect(200);
+    await request(app).post(`/api/storefront/projects/${projectId}/artifacts`).send({ requestedBy: "merchant" }).expect(200);
+
+    await request(app).post(`/api/storefront/projects/${projectId}/deployment-plan`).send({ requestedBy: "merchant" }).expect(200).expect((response) => {
+      expect(successBody<{ readonly plan: { readonly deploymentMode: string }; readonly compatibility: { readonly status: string } }>(response.body as unknown).data).toMatchObject({
+        plan: { deploymentMode: "PLAN_ONLY" },
+        compatibility: { status: "PASSED" },
+      });
+    });
+    await request(app).post(`/api/storefront/projects/${projectId}/deploy`).send({ requestedBy: "merchant" }).expect(200).expect((response) => {
+      expect(successBody<{ readonly project: { readonly status: string }; readonly health: { readonly readyForRelease: boolean } }>(response.body as unknown).data).toMatchObject({
+        project: { status: "READY_FOR_RELEASE" },
+        health: { readyForRelease: true },
+      });
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/deployment`).expect(200).expect((response) => {
+      expect(successBody<{ readonly status: string; readonly upload: { readonly uploadStatus: string } }>(response.body as unknown).data).toMatchObject({
+        status: "READY_FOR_RELEASE",
+        upload: { uploadStatus: "SKIPPED_NOOP" },
+      });
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/deployment-history`).expect(200).expect((response) => {
+      expect(successBody<{ readonly deployments: readonly unknown[] }>(response.body as unknown).data.deployments).toHaveLength(1);
+    });
+    await request(app).get(`/api/storefront/projects/${projectId}/deployment-health`).expect(200).expect((response) => {
+      expect(successBody<{ readonly readyForRelease: boolean }>(response.body as unknown).data.readyForRelease).toBe(true);
     });
   });
 });

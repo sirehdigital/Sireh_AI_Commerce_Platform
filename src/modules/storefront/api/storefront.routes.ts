@@ -9,6 +9,8 @@ import { DEFAULT_TENANT_CONTEXT, ProcessLocalTenantRegistry } from "../../saie/a
 import { prismaApprovalRepository, prismaAuditRepository } from "../../saie/infrastructure/index.js";
 import {
   ArtifactPreviewService,
+  ProductionLaunchService,
+  SafeDeploymentService,
   StorefrontFoundationService,
   StorefrontPlanningService,
   ThemeMappingService,
@@ -26,6 +28,9 @@ const PROJECT_STATUSES = new Set([
   "APPROVED",
   "REJECTED",
   "READY_FOR_DEPLOYMENT",
+  "READY_FOR_RELEASE",
+  "DEPLOYING",
+  "DEPLOYED",
   "FAILED",
   "CANCELLED",
 ]);
@@ -37,6 +42,8 @@ export interface StorefrontRouterOptions {
   readonly planningService?: StorefrontPlanningService;
   readonly themeMappingService?: ThemeMappingService;
   readonly artifactPreviewService?: ArtifactPreviewService;
+  readonly safeDeploymentService?: SafeDeploymentService;
+  readonly productionLaunchService?: ProductionLaunchService;
   readonly repository?: StorefrontRepository;
   readonly productDraftRepository?: ProductDraftRepository;
   readonly idGenerator?: () => string;
@@ -49,6 +56,8 @@ export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): R
   const planningService = options.planningService ?? createDefaultPlanningService(options);
   const themeMappingService = options.themeMappingService ?? createDefaultThemeMappingService(options);
   const artifactPreviewService = options.artifactPreviewService ?? createDefaultArtifactPreviewService(options);
+  const safeDeploymentService = options.safeDeploymentService ?? createDefaultSafeDeploymentService(options);
+  const productionLaunchService = options.productionLaunchService ?? createDefaultProductionLaunchService(options, safeDeploymentService);
 
   router.post("/profiles", asyncHandler(async (request, response) => {
     const profile = await service.createProfile(parseCreateProfileInput(request), resolveTenant(request));
@@ -158,6 +167,73 @@ export const createStorefrontRouter = (options: StorefrontRouterOptions = {}): R
     response.status(200).json({ success: true, data: validation });
   }));
 
+  router.post("/projects/:projectId/deployment-plan", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const result = await safeDeploymentService.createDeploymentPlan({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(result.compatibility.errors.length === 0 ? 200 : 202).json({ success: true, data: result });
+  }));
+
+  router.post("/projects/:projectId/deploy", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const result = await safeDeploymentService.deploy({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(result.health.readyForRelease ? 200 : 202).json({ success: true, data: result });
+  }));
+
+  router.get("/projects/:projectId/deployment", asyncHandler(async (request, response) => {
+    const deployment = await safeDeploymentService.getDeployment(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: deployment });
+  }));
+
+  router.get("/projects/:projectId/deployment-history", asyncHandler(async (request, response) => {
+    const history = await safeDeploymentService.getDeploymentHistory(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: history });
+  }));
+
+  router.get("/projects/:projectId/deployment-health", asyncHandler(async (request, response) => {
+    const health = await safeDeploymentService.getDeploymentHealth(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: health });
+  }));
+
+  router.post("/projects/:projectId/release", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const result = await productionLaunchService.release({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.releaseNotes === undefined ? {} : { releaseNotes: parseStringArray(body.releaseNotes, "releaseNotes") }),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(200).json({ success: true, data: result });
+  }));
+
+  router.get("/projects/:projectId/release", asyncHandler(async (request, response) => {
+    const release = await productionLaunchService.getRelease(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: release });
+  }));
+
+  router.get("/projects/:projectId/release-history", asyncHandler(async (request, response) => {
+    const history = await productionLaunchService.getReleaseHistory(parseProjectId(request.params.projectId), resolveTenant(request));
+    response.status(200).json({ success: true, data: history });
+  }));
+
+  router.post("/projects/:projectId/rollback", asyncHandler(async (request, response) => {
+    const body = request.body === undefined || request.body === null ? {} : asRecord(request.body, "body");
+    const rollback = await productionLaunchService.rollback({
+      projectId: parseProjectId(request.params.projectId),
+      ...(body.releaseId === undefined ? {} : { releaseId: parseRequiredText(body.releaseId, "releaseId") }),
+      ...(body.requestedBy === undefined ? {} : { requestedBy: parseRequiredText(body.requestedBy, "requestedBy") }),
+      ...(body.correlationId === undefined ? {} : { correlationId: parseRequiredText(body.correlationId, "correlationId") }),
+    }, resolveTenant(request));
+    response.status(200).json({ success: true, data: rollback });
+  }));
+
   router.patch("/projects/:projectId/status", asyncHandler(async (request, response) => {
     const project = await service.transitionProject(parseTransitionInput(request), resolveTenant(request));
     response.status(200).json({ success: true, data: project });
@@ -216,6 +292,31 @@ function createDefaultArtifactPreviewService(options: StorefrontRouterOptions): 
     storefrontRepository: options.repository ?? prismaStorefrontRepository,
     approvalRepository: prismaApprovalRepository,
     auditRepository: prismaAuditRepository,
+    now,
+    idGenerator,
+  });
+}
+
+function createDefaultSafeDeploymentService(options: StorefrontRouterOptions): SafeDeploymentService {
+  const now = options.now ?? (() => new Date());
+  const idGenerator = options.idGenerator ?? randomUUID;
+  return new SafeDeploymentService({
+    storefrontRepository: options.repository ?? prismaStorefrontRepository,
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
+    now,
+    idGenerator,
+  });
+}
+
+function createDefaultProductionLaunchService(options: StorefrontRouterOptions, safeDeploymentService: SafeDeploymentService): ProductionLaunchService {
+  const now = options.now ?? (() => new Date());
+  const idGenerator = options.idGenerator ?? randomUUID;
+  return new ProductionLaunchService({
+    storefrontRepository: options.repository ?? prismaStorefrontRepository,
+    approvalRepository: prismaApprovalRepository,
+    auditRepository: prismaAuditRepository,
+    deploymentVerifier: safeDeploymentService,
     now,
     idGenerator,
   });
