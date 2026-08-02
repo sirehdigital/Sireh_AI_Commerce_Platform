@@ -179,3 +179,52 @@ export class WinningHunterUnsupportedShortlistVersionError extends Error {
     this.name = "WinningHunterUnsupportedShortlistVersionError";
   }
 }
+
+export class WinningHunterInvalidPipelineRequestError extends Error {
+  public constructor(message = "WinningHunter discovery pipeline request is invalid") {
+    super(message);
+    this.name = "WinningHunterInvalidPipelineRequestError";
+  }
+}
+
+export class WinningHunterConflictingPipelineStrategyError extends Error {
+  public constructor(message = "WinningHunter pipeline request must not include both preset and custom strategy") {
+    super(message);
+    this.name = "WinningHunterConflictingPipelineStrategyError";
+  }
+}
+
+export class WinningHunterMissingPipelineStrategyError extends Error {
+  public constructor(message = "WinningHunter pipeline request must include a preset or custom strategy") {
+    super(message);
+    this.name = "WinningHunterMissingPipelineStrategyError";
+  }
+}
+
+export class WinningHunterInvalidPipelineTimestampError extends Error {
+  public constructor(message = "WinningHunter discovery pipeline timestamp is invalid") {
+    super(message);
+    this.name = "WinningHunterInvalidPipelineTimestampError";
+  }
+}
+
+export class WinningHunterPipelineCompositionFailureError extends Error {
+  public constructor(message = "WinningHunter discovery pipeline composition failed") {
+    super(message);
+    this.name = "WinningHunterPipelineCompositionFailureError";
+  }
+}
+
+export class WinningHunterUnrecoverablePipelineStageError extends Error {
+  public constructor(message = "WinningHunter discovery pipeline stage failed unrecoverably") {
+    super(message);
+    this.name = "WinningHunterUnrecoverablePipelineStageError";
+  }
+}
+
+export class WinningHunterMalformedPipelineResultError extends Error {
+  public constructor(message = "WinningHunter discovery pipeline result is malformed") {
+    super(message);
+    this.name = "WinningHunterMalformedPipelineResultError";
+  }
+}

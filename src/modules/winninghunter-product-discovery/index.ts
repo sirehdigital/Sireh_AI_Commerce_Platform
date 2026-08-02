@@ -49,6 +49,18 @@ export type {
   WinningProductShortlistStatus,
 } from "./domain/models/winning-product-shortlist.model.js";
 export type {
+  WinningHunterDiscoveryCapabilitySummary,
+  WinningHunterDiscoveryPipelineFailure,
+  WinningHunterDiscoveryPipelineHealthSummary,
+  WinningHunterDiscoveryPipelineRequest,
+  WinningHunterDiscoveryPipelineResult,
+  WinningHunterDiscoveryPipelineStage,
+  WinningHunterDiscoveryPipelineStageStatus,
+  WinningHunterDiscoveryPipelineStageSummary,
+  WinningHunterDiscoveryPipelineStatus,
+  WinningHunterPipelineHealth,
+} from "./domain/models/winninghunter-discovery-pipeline.model.js";
+export type {
   WinningHunterAdSignal,
   WinningHunterDiscoveryPage,
   WinningHunterDiscoveryProvider,
@@ -58,8 +70,11 @@ export type {
 } from "./domain/models/winninghunter-product-candidate.model.js";
 export {
   WinningHunterClientUnavailableError,
+  WinningHunterConflictingPipelineStrategyError,
   WinningHunterInvalidDiscoveryQueryError,
   WinningHunterInvalidNormalizationInputError,
+  WinningHunterInvalidPipelineRequestError,
+  WinningHunterInvalidPipelineTimestampError,
   WinningHunterInvalidNormalizationTimestampError,
   WinningHunterInvalidProductIdentityError,
   WinningHunterInvalidScoringConfigurationError,
@@ -73,11 +88,15 @@ export {
   WinningHunterMalformedExternalResponseError,
   WinningHunterMalformedNormalizedProductError,
   WinningHunterMalformedOpportunityAssessmentError,
+  WinningHunterMalformedPipelineResultError,
+  WinningHunterMissingPipelineStrategyError,
   WinningHunterMissingCanonicalIdentityError,
   WinningHunterMissingScoringProductIdentityError,
+  WinningHunterPipelineCompositionFailureError,
   WinningHunterProductAssessmentMismatchError,
   WinningHunterRateLimitedError,
   WinningHunterRequestTimeoutError,
+  WinningHunterUnrecoverablePipelineStageError,
   WinningHunterUnusableDiscoveryContextError,
   WinningHunterUnsupportedScoringVersionError,
   WinningHunterUnsupportedShortlistVersionError,
@@ -112,6 +131,11 @@ export {
   validateShortlistConfig,
   WinningHunterProductShortlistService,
 } from "./application/shortlist/winninghunter-product-shortlist.service.js";
+export {
+  createInMemoryWinningHunterDiscoveryPipeline,
+  createWinningHunterDiscoveryPipeline,
+  WinningHunterDiscoveryPipelineService,
+} from "./application/orchestration/winninghunter-discovery-pipeline.service.js";
 export {
   cloneWinningHunterStrategy,
   validateWinningHunterStrategy,
