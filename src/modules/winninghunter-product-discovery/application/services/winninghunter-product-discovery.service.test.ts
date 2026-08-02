@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   WinningHunterClientUnavailableError,
   WinningHunterInvalidDiscoveryQueryError,
+  WinningHunterMalformedExternalResponseError,
   WinningHunterRateLimitedError,
   WinningHunterRequestTimeoutError,
 } from "../../domain/errors/winninghunter-product-discovery.errors.js";
@@ -249,6 +250,18 @@ describe("WinningHunter Product Discovery", () => {
     const result = await service.findWinningProducts({});
 
     expect(result.candidates).toHaveLength(1);
+  });
+
+  it("rejects malformed provider pages with a typed error", async () => {
+    const service = new WinningHunterProductDiscoveryService({
+      findWinningProducts() {
+        return Promise.resolve({ rows: undefined } as unknown as { rows: [] });
+      },
+    });
+
+    await expect(service.findWinningProducts({})).rejects.toThrow(
+      WinningHunterMalformedExternalResponseError,
+    );
   });
 
   it("preserves pagination scroll and hasMore", async () => {

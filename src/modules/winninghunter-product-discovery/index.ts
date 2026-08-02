@@ -2,6 +2,19 @@ export type {
   WinningHunterDiscoveryQuery,
 } from "./domain/models/winninghunter-discovery-query.model.js";
 export type {
+  WinningHunterCandidateDiscoveryContext,
+  WinningHunterDiscoveredCandidate,
+  WinningHunterDiscoveryExecutionPlan,
+  WinningHunterDiscoveryExecutionUnit,
+  WinningHunterDiscoveryPreset,
+  WinningHunterDiscoveryRunResult,
+  WinningHunterDiscoveryRunStatus,
+  WinningHunterDiscoveryRunWarning,
+  WinningHunterMediaType,
+  WinningHunterProductDiscoveryStrategy,
+  WinningHunterTargetMarket,
+} from "./domain/models/winninghunter-discovery-strategy.model.js";
+export type {
   WinningHunterAdSignal,
   WinningHunterDiscoveryPage,
   WinningHunterDiscoveryProvider,
@@ -31,6 +44,15 @@ export {
   WinningHunterProductDiscoveryService,
 } from "./application/services/winninghunter-product-discovery.service.js";
 export {
+  buildQueryForUnit,
+  WinningHunterDiscoveryQueryEngine,
+} from "./application/services/winninghunter-discovery-query-engine.js";
+export {
+  cloneWinningHunterStrategy,
+  validateWinningHunterStrategy,
+  WinningHunterDiscoveryStrategyRegistry,
+} from "./application/strategies/winninghunter-discovery-strategy.registry.js";
+export {
   buildProductIdentity,
   extractWinningHunterCurrency,
   parseWinningHunterNumber,
@@ -38,4 +60,8 @@ export {
 } from "./infrastructure/mappers/winninghunter-product-candidate.mapper.js";
 export {
   InMemoryWinningHunterProductDiscoveryClient,
+} from "./infrastructure/clients/in-memory-winninghunter-product-discovery.client.js";
+export type {
+  InMemoryWinningHunterClientOptions,
+  InMemoryWinningHunterClientRoute,
 } from "./infrastructure/clients/in-memory-winninghunter-product-discovery.client.js";
