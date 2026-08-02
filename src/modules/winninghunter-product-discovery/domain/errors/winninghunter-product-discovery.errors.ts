@@ -130,3 +130,52 @@ export class WinningHunterUnsupportedScoringVersionError extends Error {
     this.name = "WinningHunterUnsupportedScoringVersionError";
   }
 }
+
+export class WinningHunterInvalidShortlistInputError extends Error {
+  public constructor(message = "WinningHunter shortlist input is invalid") {
+    super(message);
+    this.name = "WinningHunterInvalidShortlistInputError";
+  }
+}
+
+export class WinningHunterInvalidShortlistTimestampError extends Error {
+  public constructor(message = "WinningHunter shortlist timestamp is invalid") {
+    super(message);
+    this.name = "WinningHunterInvalidShortlistTimestampError";
+  }
+}
+
+export class WinningHunterInvalidShortlistConfigurationError extends Error {
+  public constructor(message = "WinningHunter shortlist configuration is invalid") {
+    super(message);
+    this.name = "WinningHunterInvalidShortlistConfigurationError";
+  }
+}
+
+export class WinningHunterProductAssessmentMismatchError extends Error {
+  public constructor(message = "WinningHunter product and assessment identifiers do not match") {
+    super(message);
+    this.name = "WinningHunterProductAssessmentMismatchError";
+  }
+}
+
+export class WinningHunterMalformedOpportunityAssessmentError extends Error {
+  public constructor(message = "WinningHunter opportunity assessment is malformed") {
+    super(message);
+    this.name = "WinningHunterMalformedOpportunityAssessmentError";
+  }
+}
+
+export class WinningHunterDuplicateProductConflictError extends Error {
+  public constructor(message = "WinningHunter shortlist contains duplicate product evidence") {
+    super(message);
+    this.name = "WinningHunterDuplicateProductConflictError";
+  }
+}
+
+export class WinningHunterUnsupportedShortlistVersionError extends Error {
+  public constructor(message = "WinningHunter shortlist version is unsupported") {
+    super(message);
+    this.name = "WinningHunterUnsupportedShortlistVersionError";
+  }
+}

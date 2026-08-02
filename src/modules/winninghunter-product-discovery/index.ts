@@ -36,6 +36,19 @@ export type {
   WinningProductScoreComponent,
 } from "./domain/models/winning-product-opportunity-assessment.model.js";
 export type {
+  WinningProductMerchantDecision,
+  WinningProductShortlistAction,
+  WinningProductShortlistActionCode,
+  WinningProductShortlistActionPriority,
+  WinningProductShortlistBucket,
+  WinningProductShortlistConfig,
+  WinningProductShortlistEntry,
+  WinningProductShortlistFailure,
+  WinningProductShortlistInput,
+  WinningProductShortlistResult,
+  WinningProductShortlistStatus,
+} from "./domain/models/winning-product-shortlist.model.js";
+export type {
   WinningHunterAdSignal,
   WinningHunterDiscoveryPage,
   WinningHunterDiscoveryProvider,
@@ -53,15 +66,21 @@ export {
   WinningHunterInvalidScoringInputError,
   WinningHunterInvalidScoringTimestampError,
   WinningHunterInvalidScoringWeightTotalError,
+  WinningHunterInvalidShortlistConfigurationError,
+  WinningHunterInvalidShortlistInputError,
+  WinningHunterInvalidShortlistTimestampError,
   WinningHunterMalformedCandidateEvidenceError,
   WinningHunterMalformedExternalResponseError,
   WinningHunterMalformedNormalizedProductError,
+  WinningHunterMalformedOpportunityAssessmentError,
   WinningHunterMissingCanonicalIdentityError,
   WinningHunterMissingScoringProductIdentityError,
+  WinningHunterProductAssessmentMismatchError,
   WinningHunterRateLimitedError,
   WinningHunterRequestTimeoutError,
   WinningHunterUnusableDiscoveryContextError,
   WinningHunterUnsupportedScoringVersionError,
+  WinningHunterUnsupportedShortlistVersionError,
   WinningHunterUnsupportedUrlError,
 } from "./domain/errors/winninghunter-product-discovery.errors.js";
 export {
@@ -88,6 +107,11 @@ export {
   validateScoringConfig,
   WinningHunterProductOpportunityScorer,
 } from "./application/scoring/winninghunter-product-opportunity.scorer.js";
+export {
+  DEFAULT_WINNING_PRODUCT_SHORTLIST_CONFIG,
+  validateShortlistConfig,
+  WinningHunterProductShortlistService,
+} from "./application/shortlist/winninghunter-product-shortlist.service.js";
 export {
   cloneWinningHunterStrategy,
   validateWinningHunterStrategy,
