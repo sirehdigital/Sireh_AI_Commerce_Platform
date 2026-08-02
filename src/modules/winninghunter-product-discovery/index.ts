@@ -15,6 +15,27 @@ export type {
   WinningHunterTargetMarket,
 } from "./domain/models/winninghunter-discovery-strategy.model.js";
 export type {
+  NormalizedWinningProduct,
+  NormalizedWinningProductBatchResult,
+  WinningProductAdvertisingSummary,
+  WinningProductCreativeSignal,
+  WinningProductEvidenceLevel,
+  WinningProductMarketSignal,
+  WinningProductMomentum,
+  WinningProductRecency,
+} from "./domain/models/normalized-winning-product.model.js";
+export type {
+  WinningProductOpportunityAssessment,
+  WinningProductOpportunityBatchFailure,
+  WinningProductOpportunityBatchResult,
+  WinningProductOpportunityRecommendation,
+  WinningProductOpportunityRisk,
+  WinningProductOpportunityScoringConfig,
+  WinningProductRiskSeverity,
+  WinningProductScoreAdjustment,
+  WinningProductScoreComponent,
+} from "./domain/models/winning-product-opportunity-assessment.model.js";
+export type {
   WinningHunterAdSignal,
   WinningHunterDiscoveryPage,
   WinningHunterDiscoveryProvider,
@@ -25,10 +46,22 @@ export type {
 export {
   WinningHunterClientUnavailableError,
   WinningHunterInvalidDiscoveryQueryError,
+  WinningHunterInvalidNormalizationInputError,
+  WinningHunterInvalidNormalizationTimestampError,
   WinningHunterInvalidProductIdentityError,
+  WinningHunterInvalidScoringConfigurationError,
+  WinningHunterInvalidScoringInputError,
+  WinningHunterInvalidScoringTimestampError,
+  WinningHunterInvalidScoringWeightTotalError,
+  WinningHunterMalformedCandidateEvidenceError,
   WinningHunterMalformedExternalResponseError,
+  WinningHunterMalformedNormalizedProductError,
+  WinningHunterMissingCanonicalIdentityError,
+  WinningHunterMissingScoringProductIdentityError,
   WinningHunterRateLimitedError,
   WinningHunterRequestTimeoutError,
+  WinningHunterUnusableDiscoveryContextError,
+  WinningHunterUnsupportedScoringVersionError,
   WinningHunterUnsupportedUrlError,
 } from "./domain/errors/winninghunter-product-discovery.errors.js";
 export {
@@ -47,6 +80,14 @@ export {
   buildQueryForUnit,
   WinningHunterDiscoveryQueryEngine,
 } from "./application/services/winninghunter-discovery-query-engine.js";
+export {
+  WinningHunterProductNormalizer,
+} from "./application/normalizers/winninghunter-product.normalizer.js";
+export {
+  DEFAULT_WINNING_PRODUCT_OPPORTUNITY_SCORING_CONFIG,
+  validateScoringConfig,
+  WinningHunterProductOpportunityScorer,
+} from "./application/scoring/winninghunter-product-opportunity.scorer.js";
 export {
   cloneWinningHunterStrategy,
   validateWinningHunterStrategy,
