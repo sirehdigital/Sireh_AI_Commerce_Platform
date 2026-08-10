@@ -56,6 +56,24 @@ export class InMemoryCreativeIntelligenceRepository implements CreativeIntellige
       platforms: [...record.platforms],
       targetMarkets: [...record.targetMarkets],
       brief: { ...record.brief },
+      ...(record.analysis === undefined
+        ? {}
+        : {
+            analysis: {
+              ...record.analysis,
+              dimensions: record.analysis.dimensions.map((dimension) => ({
+                ...dimension,
+                findings: dimension.findings.map((finding) => ({ ...finding })),
+                strengths: [...dimension.strengths],
+                improvementOpportunities: [...dimension.improvementOpportunities],
+              })),
+              dimensionScores: { ...record.analysis.dimensionScores },
+              findings: record.analysis.findings.map((finding) => ({ ...finding })),
+              strengths: [...record.analysis.strengths],
+              improvementOpportunities: [...record.analysis.improvementOpportunities],
+              metadata: { ...record.analysis.metadata },
+            },
+          }),
       warnings: [...record.warnings],
     };
   }

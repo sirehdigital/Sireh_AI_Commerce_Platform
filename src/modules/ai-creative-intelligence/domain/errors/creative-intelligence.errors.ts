@@ -31,3 +31,25 @@ export class CreativeIntelligenceMissingCreativeMaterialError extends AppError {
     });
   }
 }
+
+export class CreativeIntelligenceRecordNotFoundError extends AppError {
+  public constructor(message = "Creative intelligence record was not found.", details?: ErrorDetails) {
+    super({
+      message,
+      statusCode: 404,
+      code: "CREATIVE_INTELLIGENCE_RECORD_NOT_FOUND",
+      ...(details === undefined ? {} : { details }),
+    });
+  }
+}
+
+export class CreativeIntelligenceInvalidLifecycleTransitionError extends AppError {
+  public constructor(message = "Creative intelligence lifecycle transition is invalid.", details?: ErrorDetails) {
+    super({
+      message,
+      statusCode: 409,
+      code: "INVALID_CREATIVE_INTELLIGENCE_LIFECYCLE_TRANSITION",
+      ...(details === undefined ? {} : { details }),
+    });
+  }
+}

@@ -2,11 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   AiCreativeIntelligenceService,
+  CREATIVE_ANALYSIS_DIMENSIONS,
+  CREATIVE_ANALYSIS_VERSION,
+  CREATIVE_DIMENSION_WEIGHTS,
+  CREATIVE_SCORE_LABEL,
+  CreativeAnalysisService,
+  CreativeIntelligenceInvalidLifecycleTransitionError,
   CreativeIntelligenceInvalidRequestError,
   CreativeIntelligenceInvalidTimestampError,
   CreativeIntelligenceMissingCreativeMaterialError,
+  CreativeIntelligenceRecordNotFoundError,
   InMemoryCreativeIntelligenceRepository,
   type CreateCreativeIntelligenceRequest,
+  type CreativeAnalysisDimension,
   type CreativeIntelligenceRecord,
 } from "../../index.js";
 import * as publicExports from "../../../ai-creative-intelligence/index.js";
@@ -37,6 +45,17 @@ const createRecord = async (request: CreateCreativeIntelligenceRequest = buildRe
   const repository = new InMemoryCreativeIntelligenceRepository();
   return new AiCreativeIntelligenceService(repository).createCreativeIntelligence(request);
 };
+
+const withoutBrandContext = (request: CreateCreativeIntelligenceRequest): CreateCreativeIntelligenceRequest => ({
+  creativeId: request.creativeId,
+  productId: request.productId,
+  ...(request.sourceContentId === undefined ? {} : { sourceContentId: request.sourceContentId }),
+  assetType: request.assetType,
+  platforms: [...request.platforms],
+  targetMarkets: [...request.targetMarkets],
+  brief: { ...request.brief },
+  registeredAt: request.registeredAt,
+});
 
 describe("AiCreativeIntelligenceService", () => {
   it("creates a valid image creative", async () => {
@@ -259,6 +278,307 @@ describe("AiCreativeIntelligenceService", () => {
     await createRecord(request);
 
     expect(request).toEqual(before);
+  });
+});
+
+describe("CreativeAnalysisService", () => {
+  const createStoredRecord = async (request: CreateCreativeIntelligenceRequest = buildRequest()) => {
+    const repository = new InMemoryCreativeIntelligenceRepository();
+    const creationService = new AiCreativeIntelligenceService(repository);
+    const analysisService = new CreativeAnalysisService(repository);
+    const record = await creationService.createCreativeIntelligence(request);
+
+    return { repository, analysisService, record };
+  };
+
+  const scoreFor = (record: CreativeIntelligenceRecord, dimension: CreativeAnalysisDimension) => {
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+    return analysis.dimensionScores[dimension];
+  };
+
+  it("analyzes a complete creative with all six dimension scores and weighted overall score", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const result = await analysisService.analyzeById(record.id);
+
+    expect(result.analysis.dimensionScores).toEqual({
+      HOOK: 90,
+      HEADLINE: 90,
+      PRIMARY_TEXT: 90,
+      CTA: 90,
+      VISUAL_CONCEPT: 90,
+      BRAND_CONSISTENCY: 85,
+    });
+    expect(result.analysis.dimensions.map((dimension) => dimension.dimension)).toEqual(CREATIVE_ANALYSIS_DIMENSIONS);
+    expect(result.analysis.overallScore).toBe(89);
+    expect(result.analysis.metadata.scoreLabel).toBe(CREATIVE_SCORE_LABEL);
+  });
+
+  it("uses the documented central weights for the exact weighted score calculation", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+    const weightedScore =
+      (analysis.dimensionScores.HOOK * CREATIVE_DIMENSION_WEIGHTS.HOOK +
+        analysis.dimensionScores.HEADLINE * CREATIVE_DIMENSION_WEIGHTS.HEADLINE +
+        analysis.dimensionScores.PRIMARY_TEXT * CREATIVE_DIMENSION_WEIGHTS.PRIMARY_TEXT +
+        analysis.dimensionScores.CTA * CREATIVE_DIMENSION_WEIGHTS.CTA +
+        analysis.dimensionScores.VISUAL_CONCEPT * CREATIVE_DIMENSION_WEIGHTS.VISUAL_CONCEPT +
+        analysis.dimensionScores.BRAND_CONSISTENCY * CREATIVE_DIMENSION_WEIGHTS.BRAND_CONSISTENCY) /
+      100;
+
+    expect(Object.values(CREATIVE_DIMENSION_WEIGHTS).reduce((sum, weight) => sum + weight, 0)).toBe(100);
+    expect(analysis.overallScore).toBe(Math.round(weightedScore));
+  });
+
+  it("keeps every score inside the 0 to 100 bounds", async () => {
+    const { analysisService, record } = await createStoredRecord(
+      buildRequest({
+        brief: {
+          hook: "SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE SALE",
+          headline: "BUY NOW!!!!",
+          primaryText: "buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy buy",
+          callToAction: "Click Here",
+          visualConcept: "white background",
+        },
+        brandName: "Sireh Beauty",
+        brandTone: "Helpful",
+      }),
+    );
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+    const scores = [...Object.values(analysis.dimensionScores), analysis.overallScore];
+
+    expect(scores.every((score) => score >= 0)).toBe(true);
+    expect(scores.every((score) => score <= 100)).toBe(true);
+  });
+
+  it("produces deterministic scores, finding codes, finding order, strengths, and improvements", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const first = analysisService.analyzePreview(record);
+    const second = analysisService.analyzePreview(record);
+
+    expect(second.dimensionScores).toEqual(first.dimensionScores);
+    expect(second.overallScore).toBe(first.overallScore);
+    expect(second.findings.map((finding) => finding.code)).toEqual(first.findings.map((finding) => finding.code));
+    expect(second.strengths).toEqual(first.strengths);
+    expect(second.improvementOpportunities).toEqual(first.improvementOpportunities);
+  });
+
+  it("scores hook presence and hook absence deterministically", async () => {
+    const present = await createRecord(buildRequest({ brief: { hook: "Fresh style in five minutes", visualConcept: "Bathroom counter product setup" } }));
+    const missing = await createRecord(buildRequest({ brief: { visualConcept: "Bathroom counter product setup" } }));
+
+    expect(scoreFor(present, "HOOK")).toBe(90);
+    expect(scoreFor(missing, "HOOK")).toBe(35);
+  });
+
+  it("scores headline presence and headline absence deterministically", async () => {
+    const present = await createRecord(buildRequest({ brief: { headline: "Fast Morning Polish", visualConcept: "Bathroom counter product setup" } }));
+    const missing = await createRecord(buildRequest({ brief: { visualConcept: "Bathroom counter product setup" } }));
+
+    expect(scoreFor(present, "HEADLINE")).toBe(90);
+    expect(scoreFor(missing, "HEADLINE")).toBe(35);
+  });
+
+  it("scores complete and minimal primary text deterministically", async () => {
+    const complete = await createRecord(
+      buildRequest({ brief: { primaryText: "A compact styling tool helps keep daily routines polished and simple.", visualConcept: "Bathroom counter product setup" } }),
+    );
+    const minimal = await createRecord(buildRequest({ brief: { primaryText: "Polished.", visualConcept: "Bathroom counter product setup" } }));
+
+    expect(scoreFor(complete, "PRIMARY_TEXT")).toBe(90);
+    expect(scoreFor(minimal, "PRIMARY_TEXT")).toBe(52);
+  });
+
+  it("scores CTA presence and CTA absence deterministically", async () => {
+    const present = await createRecord(buildRequest({ brief: { callToAction: "Shop Now", visualConcept: "Bathroom counter product setup" } }));
+    const missing = await createRecord(buildRequest({ brief: { visualConcept: "Bathroom counter product setup" } }));
+
+    expect(scoreFor(present, "CTA")).toBe(90);
+    expect(scoreFor(missing, "CTA")).toBe(30);
+  });
+
+  it("scores visual concept presence and absence without image inspection", async () => {
+    const present = await createRecord(
+      buildRequest({ brief: { visualConcept: "Warm vanity scene with product beside travel essentials" } }),
+    );
+    const missing = await createRecord(buildRequest({ brief: { hook: "Fresh style in five minutes" } }));
+
+    expect(scoreFor(present, "VISUAL_CONCEPT")).toBe(90);
+    expect(scoreFor(missing, "VISUAL_CONCEPT")).toBe(35);
+  });
+
+  it("scores available and limited brand context without inventing a brand kit", async () => {
+    const available = await createRecord(buildRequest({ brandName: "Sireh Beauty", brandTone: "Helpful polished", brief: { primaryText: "Helpful polished routines made simple." } }));
+    const limitedRequest = withoutBrandContext(buildRequest({ brief: { visualConcept: "Bathroom counter product setup" } }));
+    const limited = await createRecord(limitedRequest);
+
+    expect(scoreFor(available, "BRAND_CONSISTENCY")).toBe(90);
+    expect(scoreFor(limited, "BRAND_CONSISTENCY")).toBe(55);
+  });
+
+  it("keeps valid but incomplete creative records analyzable", async () => {
+    const request = withoutBrandContext(buildRequest({
+      brief: {
+        visualConcept: "Studio shot",
+      },
+    }));
+    const { analysisService, record } = await createStoredRecord(
+      request,
+    );
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+
+    expect(analysis.dimensionScores).toEqual({
+      HOOK: 35,
+      HEADLINE: 35,
+      PRIMARY_TEXT: 35,
+      CTA: 30,
+      VISUAL_CONCEPT: 55,
+      BRAND_CONSISTENCY: 55,
+    });
+    expect(analysis.overallScore).toBe(40);
+  });
+
+  it("continues to reject malformed creation input before analysis", async () => {
+    await expect(createRecord(buildRequest({ brief: null as unknown as CreateCreativeIntelligenceRequest["brief"] }))).rejects.toThrow(
+      CreativeIntelligenceInvalidRequestError,
+    );
+  });
+
+  it("rejects blank analysis lookup input and missing records", async () => {
+    const repository = new InMemoryCreativeIntelligenceRepository();
+    const analysisService = new CreativeAnalysisService(repository);
+
+    await expect(analysisService.analyzeById(" ")).rejects.toThrow(CreativeIntelligenceInvalidRequestError);
+    await expect(analysisService.analyzeById("missing")).rejects.toThrow(CreativeIntelligenceRecordNotFoundError);
+  });
+
+  it("emits deterministic finding codes and categories", async () => {
+    const request = withoutBrandContext(buildRequest({
+      brief: {
+        hook: "Fresh start",
+        headline: "FRESH START!!",
+        primaryText: "simple simple simple",
+        callToAction: "Learn More",
+        visualConcept: "Studio shot",
+      },
+    }));
+    const { analysisService, record } = await createStoredRecord(
+      request,
+    );
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+
+    expect(analysis.findings.map((finding) => finding.code)).toEqual([
+      "HOOK_PRESENT",
+      "HOOK_TOO_SHORT",
+      "HEADLINE_PRESENT",
+      "HEADLINE_USEFUL_LENGTH",
+      "HEADLINE_EXCESSIVE_PUNCTUATION",
+      "HEADLINE_ALL_UPPERCASE",
+      "HEADLINE_DUPLICATES_HOOK",
+      "PRIMARY_TEXT_PRESENT",
+      "PRIMARY_TEXT_TOO_SHORT",
+      "PRIMARY_TEXT_REPETITIVE",
+      "CTA_PRESENT",
+      "CTA_ACTION_LANGUAGE",
+      "CTA_TOO_VAGUE",
+      "VISUAL_CONCEPT_PRESENT",
+      "VISUAL_CONCEPT_TOO_THIN",
+      "BRAND_CONTEXT_LIMITED",
+      "BRAND_CONTEXT_ADD_NAME_OR_TONE",
+    ]);
+    expect(new Set(analysis.findings.map((finding) => finding.type))).toEqual(new Set(["STRENGTH", "WARNING", "IMPROVEMENT"]));
+  });
+
+  it("sets analysis version and transitions lifecycle from pending analysis to analyzed", async () => {
+    const { analysisService, repository, record } = await createStoredRecord();
+
+    expect(record.analysisStatus).toBe("PENDING_ANALYSIS");
+    const result = await analysisService.analyzeByCreativeId(record.creativeId);
+
+    expect(result.analysis.analysisVersion).toBe(CREATIVE_ANALYSIS_VERSION);
+    expect(result.record.analysisStatus).toBe("ANALYZED");
+    expect((await repository.findById(record.id))?.analysisStatus).toBe("ANALYZED");
+  });
+
+  it("rejects persisted analysis when the record is not pending analysis", async () => {
+    const { analysisService, repository, record } = await createStoredRecord();
+
+    await analysisService.analyzeById(record.id);
+
+    await expect(analysisService.analyzeById(record.id)).rejects.toThrow(CreativeIntelligenceInvalidLifecycleTransitionError);
+    const stored = await repository.findById(record.id);
+    expect(stored?.analysisStatus).toBe("ANALYZED");
+    expect(stored?.analysis?.analysisVersion).toBe(CREATIVE_ANALYSIS_VERSION);
+  });
+
+  it("keeps preview analysis strictly non-persistent", async () => {
+    const { analysisService, repository, record } = await createStoredRecord();
+
+    const preview = analysisService.analyzePreview(record);
+    (preview.findings as (typeof preview.findings)[number][]).push({
+      dimension: "HOOK",
+      type: "WARNING",
+      code: "INJECTED_PREVIEW",
+      message: "Injected preview mutation",
+      impact: "HIGH",
+    });
+    (preview.dimensions[0]?.strengths as string[]).push("Injected preview strength");
+
+    const stored = await repository.findById(record.id);
+
+    expect(preview.analysisVersion).toBe(CREATIVE_ANALYSIS_VERSION);
+    expect(stored).toEqual(record);
+    expect(stored?.analysisStatus).toBe("PENDING_ANALYSIS");
+    expect(stored?.analysis).toBeUndefined();
+    expect(stored?.id).toBe(record.id);
+    expect(stored?.creativeId).toBe(record.creativeId);
+    expect(stored?.productId).toBe(record.productId);
+    expect(stored?.sourceContentId).toBe(record.sourceContentId);
+    expect(stored?.platforms).toEqual(record.platforms);
+    expect(stored?.targetMarkets).toEqual(record.targetMarkets);
+  });
+
+  it("preserves canonical identity and commerce associations during analysis", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const result = await analysisService.analyzeById(record.id);
+
+    expect(result.record.id).toBe(record.id);
+    expect(result.record.creativeId).toBe(record.creativeId);
+    expect(result.record.productId).toBe(record.productId);
+    expect(result.record.sourceContentId).toBe(record.sourceContentId);
+    expect(result.record.platforms).toEqual(record.platforms);
+    expect(result.record.targetMarkets).toEqual(record.targetMarkets);
+  });
+
+  it("defensively copies analysis results through service and repository boundaries", async () => {
+    const { analysisService, repository, record } = await createStoredRecord();
+
+    const result = await analysisService.analyzeById(record.id);
+    (result.analysis.findings as (typeof result.analysis.findings)[number][]).push({
+      dimension: "HOOK",
+      type: "WARNING",
+      code: "INJECTED",
+      message: "Injected mutation",
+      impact: "HIGH",
+    });
+    (result.record.analysis?.dimensions[0]?.strengths as string[]).push("Injected strength");
+
+    const stored = await repository.findById(record.id);
+
+    expect(stored?.analysis?.findings.map((finding) => finding.code)).not.toContain("INJECTED");
+    expect(stored?.analysis?.dimensions[0]?.strengths).not.toContain("Injected strength");
+  });
+
+  it("exports the public analysis API", () => {
+    expect(publicExports.CreativeAnalysisService).toBe(CreativeAnalysisService);
+    expect(publicExports.CREATIVE_ANALYSIS_VERSION).toBe(CREATIVE_ANALYSIS_VERSION);
+    expect(publicExports.CREATIVE_DIMENSION_WEIGHTS.HOOK).toBe(20);
   });
 });
 

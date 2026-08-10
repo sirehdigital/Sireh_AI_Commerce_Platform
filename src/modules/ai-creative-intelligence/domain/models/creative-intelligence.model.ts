@@ -1,3 +1,5 @@
+import type { CreativeAnalysisResult } from "./creative-analysis.model.js";
+
 export const CREATIVE_ASSET_TYPES = ["IMAGE", "VIDEO", "CAROUSEL", "COPY", "MIXED"] as const;
 
 export type CreativeAssetType = (typeof CREATIVE_ASSET_TYPES)[number];
@@ -31,6 +33,7 @@ export interface CreativeIntelligenceRecord {
   readonly brandName?: string;
   readonly brandTone?: string;
   readonly analysisStatus: CreativeAnalysisStatus;
+  readonly analysis?: CreativeAnalysisResult;
   readonly warnings: readonly string[];
   readonly registeredAt: string;
   readonly version: "SACP-CREATIVE-v1";
