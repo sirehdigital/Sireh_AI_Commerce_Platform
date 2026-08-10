@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   AiCampaignStrategyService,
+  AudienceMarketStrategyEngine,
+  AUDIENCE_MARKET_SEGMENTS,
+  AUDIENCE_MARKET_STRATEGY_VERSION,
   CampaignObjectiveFunnelStrategyEngine,
   CAMPAIGN_INTENT_LEVELS,
   CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
@@ -16,6 +19,7 @@ import {
   UnsupportedChannelError,
   UnsupportedObjectiveError,
   type CreateCampaignStrategyRequest,
+  type AudienceMarketStrategy,
   type CampaignObjectiveFunnelStrategy,
 } from "../../index.js";
 import * as publicExports from "../../../ai-campaign-strategy/index.js";
@@ -535,6 +539,173 @@ describe("CampaignObjectiveFunnelStrategyEngine", () => {
     expect(publicExports.CAMPAIGN_STRATEGIC_OBJECTIVES).toEqual(CAMPAIGN_STRATEGIC_OBJECTIVES);
     expect(publicExports.CAMPAIGN_STRATEGIC_FUNNEL_STAGES).toEqual(CAMPAIGN_STRATEGIC_FUNNEL_STAGES);
     expect(publicExports.CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION).toBe(CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION);
+  });
+});
+
+describe("AudienceMarketStrategyEngine", () => {
+  const determine = (request: CreateCampaignStrategyRequest = buildRequest()): AudienceMarketStrategy =>
+    new AudienceMarketStrategyEngine().determineStrategy(request);
+
+  it("selects a TOFU discovery audience", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "BRAND_AWARENESS",
+        audience: { ...buildRequest().audience, awarenessLevel: "UNAWARE", painPoints: [], objections: [], buyingTriggers: [] },
+        offer: { type: "STANDARD", headline: "Meet the daily styling helper", terms: [] },
+      }),
+    );
+
+    expect(strategy.audienceSegment).toBe("DISCOVERY");
+    expect(strategy.funnelAlignment).toBe("TOFU");
+    expect(strategy.objectiveAlignment).toBe("AWARENESS");
+  });
+
+  it("selects a MOFU solution or product-aware audience", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "TRAFFIC",
+        preferredAngles: ["EDUCATION", "COMPARISON"],
+        audience: { ...buildRequest().audience, awarenessLevel: "PRODUCT_AWARE", buyingTriggers: ["Compare options"] },
+        offer: { type: "STANDARD", headline: "Compare the daily routine fit", terms: [] },
+      }),
+    );
+
+    expect(strategy.audienceSegment).toBe("PRODUCT_AWARE");
+    expect(strategy.funnelAlignment).toBe("MOFU");
+    expect(strategy.audienceIntent).toBe("MEDIUM");
+  });
+
+  it("selects a BOFU high-intent buyer", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "CONVERSION",
+        audience: { ...buildRequest().audience, awarenessLevel: "MOST_AWARE", buyingTriggers: ["Ready to checkout"] },
+        offer: { type: "PERCENTAGE_DISCOUNT", headline: "Save today", discountPercentage: 15, terms: ["Merchant approval required"] },
+      }),
+    );
+
+    expect(strategy.audienceSegment).toBe("HIGH_INTENT_BUYER");
+    expect(strategy.funnelAlignment).toBe("BOFU");
+    expect(strategy.objectiveAlignment).toBe("CONVERSION");
+  });
+
+  it("selects an existing-customer retention audience", () => {
+    const strategy = determine(buildRequest({ objective: "CUSTOMER_RETENTION" }));
+
+    expect(strategy.audienceSegment).toBe("EXISTING_CUSTOMER");
+    expect(strategy.funnelAlignment).toBe("RETENTION");
+    expect(strategy.objectiveAlignment).toBe("RETENTION");
+  });
+
+  it("selects a repeat-buyer audience when repeat purchase signals exist", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "CUSTOMER_RETENTION",
+        audience: { ...buildRequest().audience, buyingTriggers: ["Repeat order reminder"] },
+      }),
+    );
+
+    expect(strategy.audienceSegment).toBe("REPEAT_BUYER");
+    expect(strategy.reason).toContain("REPEAT_BUYER segment was derived from RETENTION funnel alignment and structured audience signals.");
+  });
+
+  it("prioritizes primary and secondary markets from supplied associations", () => {
+    const strategy = determine(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US", "MY"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY", "SG"] },
+      }),
+    );
+
+    expect(strategy.primaryMarket).toBe("MY");
+    expect(strategy.secondaryMarkets).toEqual(["US"]);
+    expect(strategy.geographicPriority.map((market) => [market.market, market.priority])).toEqual([
+      ["US", "SECONDARY"],
+      ["MY", "PRIMARY"],
+      ["SG", "EXPERIMENTAL"],
+    ]);
+  });
+
+  it("marks insufficient market evidence conservatively", () => {
+    const strategy = determine(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(strategy.primaryMarket).toBe("US");
+    expect(strategy.secondaryMarkets).toEqual([]);
+    expect(strategy.geographicPriority.map((market) => [market.market, market.priority])).toEqual([
+      ["US", "EXPERIMENTAL"],
+      ["MY", "NOT_RECOMMENDED"],
+    ]);
+  });
+
+  it("derives channel fit from existing campaign channel associations", () => {
+    const strategy = determine(buildRequest({ objective: "CONVERSION" }));
+
+    expect(strategy.channelFit.map((channel) => [channel.channel, channel.fit])).toEqual([
+      ["TIKTOK", "PRIMARY"],
+      ["FACEBOOK", "PRIMARY"],
+      ["SHOPIFY_ONSITE", "PRIMARY"],
+      ["EMAIL", "SUPPORTING"],
+      ["RETARGETING", "RETARGETING"],
+    ]);
+  });
+
+  it("preserves objective and funnel alignment from 04.04B", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "LEAD_GENERATION",
+        audience: { ...buildRequest().audience, buyingTriggers: ["Download routine guide"] },
+        offer: { type: "STANDARD", headline: "Join the routine guide", terms: [] },
+      }),
+    );
+
+    expect(strategy.objectiveAlignment).toBe("LEAD_GENERATION");
+    expect(strategy.funnelAlignment).toBe("MOFU");
+  });
+
+  it("keeps repeated audience and market output deterministic", () => {
+    const engine = new AudienceMarketStrategyEngine();
+    const request = buildRequest({ objective: "CONVERSION" });
+
+    expect(engine.determineStrategy(request)).toEqual(engine.determineStrategy(request));
+  });
+
+  it("preserves canonical identity and product, market, and channel associations", () => {
+    const engine = new AudienceMarketStrategyEngine();
+    const request = buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] });
+    const sourceStrategy = new AiCampaignStrategyService().createStrategy(request);
+    const strategy = engine.determineStrategy(request);
+
+    expect(strategy.campaignStrategyId).toBe(sourceStrategy.id);
+    expect(strategy.product).toEqual(sourceStrategy.product);
+    expect(strategy.geographicPriority.map((market) => market.market)).toEqual(["US", "MY"]);
+    expect(strategy.channelFit.map((channel) => channel.channel)).toEqual(["EMAIL", "TIKTOK"]);
+  });
+
+  it("returns advisory audience and market metadata", () => {
+    const strategy = determine();
+
+    expect(strategy.advisoryOnly).toBe(true);
+    expect(strategy.metadata).toEqual({
+      strategyVersion: AUDIENCE_MARKET_STRATEGY_VERSION,
+      sourceStrategyVersion: "SACP-04.04A",
+      objectiveFunnelStrategyVersion: CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+    });
+  });
+
+  it("rejects invalid input through existing strategy validation", () => {
+    expect(() => determine(buildRequest({ objective: "NOT_REAL" as CreateCampaignStrategyRequest["objective"] }))).toThrow(UnsupportedObjectiveError);
+  });
+
+  it("exports the public audience and market strategy API", () => {
+    expect(publicExports.AudienceMarketStrategyEngine).toBe(AudienceMarketStrategyEngine);
+    expect(publicExports.AUDIENCE_MARKET_SEGMENTS).toEqual(AUDIENCE_MARKET_SEGMENTS);
+    expect(publicExports.MARKET_PRIORITY_LEVELS).toEqual(["PRIMARY", "SECONDARY", "EXPERIMENTAL", "NOT_RECOMMENDED"]);
+    expect(publicExports.AUDIENCE_MARKET_STRATEGY_VERSION).toBe(AUDIENCE_MARKET_STRATEGY_VERSION);
   });
 });
 
