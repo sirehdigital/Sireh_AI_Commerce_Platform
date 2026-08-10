@@ -1,4 +1,6 @@
 import type { CreativeIntelligenceRecord } from "../../domain/models/creative-intelligence.model.js";
+import { CreativePolicyRiskEvaluator } from "../policy/creative-policy-risk-evaluator.js";
+import { PlatformSuitabilityEvaluator } from "../suitability/platform-suitability-evaluator.js";
 import {
   CREATIVE_ANALYSIS_DIMENSIONS,
   CREATIVE_ANALYSIS_VERSION,
@@ -35,6 +37,9 @@ interface TextSignals {
 }
 
 export class CreativeDimensionAnalyzer {
+  private readonly platformSuitabilityEvaluator = new PlatformSuitabilityEvaluator();
+  private readonly policyRiskEvaluator = new CreativePolicyRiskEvaluator();
+
   public analyze(record: CreativeIntelligenceRecord): CreativeAnalysisResult {
     const dimensions = CREATIVE_ANALYSIS_DIMENSIONS.map((dimension) => this.analyzeDimension(dimension, record));
     const dimensionScores = this.buildDimensionScores(dimensions);
@@ -43,16 +48,18 @@ export class CreativeDimensionAnalyzer {
     );
 
     const findings = dimensions.flatMap((dimension) => dimension.findings);
+    const strengths = dimensions.flatMap((dimension) => dimension.strengths);
+    const improvementOpportunities = dimensions.flatMap((dimension) => dimension.improvementOpportunities);
 
-    return {
+    const analysis: CreativeAnalysisResult = {
       creativeIntelligenceId: record.id,
       creativeId: record.creativeId,
       dimensions,
       dimensionScores,
       overallScore,
       findings,
-      strengths: dimensions.flatMap((dimension) => dimension.strengths),
-      improvementOpportunities: dimensions.flatMap((dimension) => dimension.improvementOpportunities),
+      strengths,
+      improvementOpportunities,
       analysisVersion: CREATIVE_ANALYSIS_VERSION,
       metadata: {
         scoringRule: "WEIGHTED_INTEGER_ROUND_HALF_UP",
@@ -60,6 +67,12 @@ export class CreativeDimensionAnalyzer {
         advisoryOnly: true,
         sourceRecordVersion: record.version,
       },
+    };
+
+    return {
+      ...analysis,
+      platformSuitability: this.platformSuitabilityEvaluator.evaluate(analysis),
+      policyRisk: this.policyRiskEvaluator.evaluate(record),
     };
   }
 

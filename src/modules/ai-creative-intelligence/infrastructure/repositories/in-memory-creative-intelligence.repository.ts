@@ -71,6 +71,25 @@ export class InMemoryCreativeIntelligenceRepository implements CreativeIntellige
               findings: record.analysis.findings.map((finding) => ({ ...finding })),
               strengths: [...record.analysis.strengths],
               improvementOpportunities: [...record.analysis.improvementOpportunities],
+              ...(record.analysis.platformSuitability === undefined
+                ? {}
+                : {
+                    platformSuitability: record.analysis.platformSuitability.map((assessment) => ({
+                      ...assessment,
+                      findings: assessment.findings.map((finding) => ({
+                        ...finding,
+                        evidence: finding.evidence.map((evidence) => ({ ...evidence })),
+                      })),
+                    })),
+                  }),
+              ...(record.analysis.policyRisk === undefined
+                ? {}
+                : {
+                    policyRisk: {
+                      ...record.analysis.policyRisk,
+                      findings: record.analysis.policyRisk.findings.map((finding) => ({ ...finding })),
+                    },
+                  }),
               metadata: { ...record.analysis.metadata },
             },
           }),

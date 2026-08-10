@@ -5,6 +5,7 @@ import {
   CREATIVE_ANALYSIS_DIMENSIONS,
   CREATIVE_ANALYSIS_VERSION,
   CREATIVE_DIMENSION_WEIGHTS,
+  CREATIVE_PLATFORMS,
   CREATIVE_SCORE_LABEL,
   CreativeAnalysisService,
   CreativeIntelligenceInvalidLifecycleTransitionError,
@@ -13,9 +14,17 @@ import {
   CreativeIntelligenceMissingCreativeMaterialError,
   CreativeIntelligenceRecordNotFoundError,
   InMemoryCreativeIntelligenceRepository,
+  PLATFORM_SUITABILITY_THRESHOLDS,
+  PLATFORM_SUITABILITY_WEIGHTS,
+  POLICY_RISK_CATEGORIES,
   type CreateCreativeIntelligenceRequest,
   type CreativeAnalysisDimension,
+  type CreativeAnalysisResult,
+  type CreativePlatform,
   type CreativeIntelligenceRecord,
+  type PlatformSuitabilityFinding,
+  type PolicyRiskCategory,
+  type PolicyRiskFinding,
 } from "../../index.js";
 import * as publicExports from "../../../ai-creative-intelligence/index.js";
 
@@ -56,6 +65,10 @@ const withoutBrandContext = (request: CreateCreativeIntelligenceRequest): Create
   brief: { ...request.brief },
   registeredAt: request.registeredAt,
 });
+
+const platformAssessmentFor = (analysis: CreativeAnalysisResult, platform: CreativePlatform) => analysis.platformSuitability?.find((assessment) => assessment.platform === platform);
+
+const policyFindingFor = (analysis: CreativeAnalysisResult, category: PolicyRiskCategory) => analysis.policyRisk?.findings.find((finding) => finding.category === category);
 
 describe("AiCreativeIntelligenceService", () => {
   it("creates a valid image creative", async () => {
@@ -543,6 +556,213 @@ describe("CreativeAnalysisService", () => {
     expect(stored?.targetMarkets).toEqual(record.targetMarkets);
   });
 
+  it("assesses suitability for all supported platforms with deterministic scores", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+
+    expect(analysis.platformSuitability?.map((assessment) => assessment.platform)).toEqual(CREATIVE_PLATFORMS);
+    expect(analysis.platformSuitability?.map((assessment) => [assessment.platform, assessment.score, assessment.status])).toEqual([
+      ["FACEBOOK", 90, "SUITABLE"],
+      ["INSTAGRAM", 89, "SUITABLE"],
+      ["THREADS", 90, "SUITABLE"],
+      ["TIKTOK", 90, "SUITABLE"],
+      ["SHOPIFY", 89, "SUITABLE"],
+      ["EMAIL", 89, "SUITABLE"],
+      ["OTHER", 89, "SUITABLE"],
+    ]);
+  });
+
+  it("keeps platform scores bounded and weights centralized at 100 per platform", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const { analysis } = await analysisService.analyzeById(record.id);
+
+    expect(analysis.platformSuitability?.every((assessment) => assessment.score >= 0 && assessment.score <= 100)).toBe(true);
+    expect(Object.values(PLATFORM_SUITABILITY_WEIGHTS).every((weights) => Object.values(weights).reduce((sum, weight) => sum + weight, 0) === 100)).toBe(true);
+    expect(PLATFORM_SUITABILITY_THRESHOLDS).toEqual({ suitable: 80, needsReview: 60 });
+  });
+
+  it("derives suitable, needs-review, and not-recommended statuses from thresholds", async () => {
+    const suitable = await createRecord();
+    const needsReview = await createRecord(
+      buildRequest({
+        brief: {
+          hook: "Fresh style in five minutes",
+          headline: "Fast Morning Polish",
+          primaryText: "A compact styling tool helps keep daily routines polished and simple.",
+          visualConcept: "Warm vanity scene with product beside travel essentials",
+        },
+      }),
+    );
+    const notRecommended = await createRecord(withoutBrandContext(buildRequest({ brief: { visualConcept: "Studio shot" } })));
+    const analysisService = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository());
+
+    expect(platformAssessmentFor(analysisService.analyzePreview(suitable), "FACEBOOK")?.status).toBe("SUITABLE");
+    expect(platformAssessmentFor(analysisService.analyzePreview(needsReview), "FACEBOOK")?.status).toBe("NEEDS_REVIEW");
+    expect(platformAssessmentFor(analysisService.analyzePreview(notRecommended), "FACEBOOK")?.status).toBe("NOT_RECOMMENDED");
+  });
+
+  it("uses platform-specific weighting behavior", async () => {
+    const record = await createRecord();
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(PLATFORM_SUITABILITY_WEIGHTS.FACEBOOK).toMatchObject({ PRIMARY_TEXT: 25, CTA: 20 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.INSTAGRAM).toMatchObject({ VISUAL_CONCEPT: 35, BRAND_CONSISTENCY: 20 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.THREADS).toMatchObject({ PRIMARY_TEXT: 35, VISUAL_CONCEPT: 5 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.TIKTOK).toMatchObject({ HOOK: 30, VISUAL_CONCEPT: 30 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.SHOPIFY).toMatchObject({ HEADLINE: 25, PRIMARY_TEXT: 25, BRAND_CONSISTENCY: 20 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.EMAIL).toMatchObject({ HEADLINE: 30, CTA: 25, VISUAL_CONCEPT: 0 });
+    expect(PLATFORM_SUITABILITY_WEIGHTS.OTHER).toMatchObject({ HOOK: 15, VISUAL_CONCEPT: 20 });
+    expect(platformAssessmentFor(analysis, "FACEBOOK")?.findings.map((finding) => finding.code)).toEqual(["FACEBOOK_STRUCTURAL_STRENGTHS_PRESENT"]);
+  });
+
+  it("keeps platform suitability deterministic for equivalent repeated input", async () => {
+    const record = await createRecord();
+    const analysisService = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository());
+
+    const first = analysisService.analyzePreview(record);
+    const second = analysisService.analyzePreview(record);
+
+    expect(second.platformSuitability).toEqual(first.platformSuitability);
+    expect(second.platformSuitability?.flatMap((assessment) => assessment.findings.map((finding) => finding.code))).toEqual(
+      first.platformSuitability?.flatMap((assessment) => assessment.findings.map((finding) => finding.code)),
+    );
+  });
+
+  it("returns low policy risk for ordinary creative and does not treat ordinary CTA as deceptive urgency", async () => {
+    const record = await createRecord(buildRequest({ brief: { callToAction: "Shop Now", visualConcept: "Bathroom counter product setup" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(analysis.policyRisk).toEqual({ overallRisk: "LOW", requiresHumanReview: false, findings: [] });
+  });
+
+  it("detects unsupported claim, medical claim, and guaranteed outcome risk", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          headline: "Clinically Proven Tool",
+          primaryText: "This is clinically proven and scientifically proven with guaranteed results.",
+          visualConcept: "Bathroom counter product setup",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(policyFindingFor(analysis, "UNSUPPORTED_CLAIM")?.code).toBe("UNSUPPORTED_CLAIM_PROVEN");
+    expect(policyFindingFor(analysis, "MEDICAL_OR_CLINICAL_CLAIM")?.severity).toBe("CRITICAL");
+    expect(policyFindingFor(analysis, "GUARANTEED_OUTCOME")?.severity).toBe("HIGH");
+    expect(analysis.policyRisk?.overallRisk).toBe("CRITICAL");
+    expect(analysis.policyRisk?.requiresHumanReview).toBe(true);
+  });
+
+  it("detects fabricated social proof, body shaming, and insecurity exploitation", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          headline: "Five-star reviews everywhere",
+          primaryText: "Thousands of happy customers use this. Stop being ashamed and fix your body.",
+          visualConcept: "Bathroom counter product setup",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(policyFindingFor(analysis, "FABRICATED_SOCIAL_PROOF")?.code).toBe("FABRICATED_SOCIAL_PROOF_RISK");
+    expect(policyFindingFor(analysis, "BODY_SHAMING")?.severity).toBe("CRITICAL");
+    expect(policyFindingFor(analysis, "INSECURITY_EXPLOITATION")?.severity).toBe("HIGH");
+    expect(analysis.policyRisk?.overallRisk).toBe("CRITICAL");
+  });
+
+  it("detects sensitive attribute inference and deceptive urgency", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          primaryText: "Because you are pregnant, act now or lose everything.",
+          callToAction: "Explore",
+          visualConcept: "Bathroom counter product setup",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(policyFindingFor(analysis, "SENSITIVE_ATTRIBUTE_INFERENCE")?.code).toBe("SENSITIVE_ATTRIBUTE_INFERENCE_TEXT");
+    expect(policyFindingFor(analysis, "DECEPTIVE_URGENCY")?.severity).toBe("MEDIUM");
+    expect(analysis.policyRisk?.overallRisk).toBe("HIGH");
+    expect(analysis.policyRisk?.requiresHumanReview).toBe(true);
+  });
+
+  it("keeps policy risk finding order and stable categories deterministic", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          primaryText: "Scientifically proven and clinically proven with guaranteed results. Thousands of happy customers. You will regret missing this.",
+          visualConcept: "Bathroom counter product setup",
+        },
+      }),
+    );
+    const analysisService = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository());
+
+    const first = analysisService.analyzePreview(record);
+    const second = analysisService.analyzePreview(record);
+
+    expect(first.policyRisk?.findings.map((finding) => finding.code)).toEqual([
+      "UNSUPPORTED_CLAIM_PROVEN",
+      "MEDICAL_OR_CLINICAL_CLAIM_DETECTED",
+      "GUARANTEED_OUTCOME_PROMISE",
+      "FABRICATED_SOCIAL_PROOF_RISK",
+      "DECEPTIVE_URGENCY_PRESSURE",
+    ]);
+    expect(second.policyRisk?.findings).toEqual(first.policyRisk?.findings);
+    expect(POLICY_RISK_CATEGORIES).toContain("OTHER");
+  });
+
+  it("keeps 04.03B quality analysis intact while adding 04.03C assessments", async () => {
+    const { analysisService, record } = await createStoredRecord();
+
+    const { analysis, record: analyzedRecord } = await analysisService.analyzeById(record.id);
+
+    expect(analysis.overallScore).toBe(89);
+    expect(analysis.dimensionScores.HOOK).toBe(90);
+    expect(analysis.platformSuitability).toHaveLength(7);
+    expect(analysis.policyRisk?.overallRisk).toBe("LOW");
+    expect(analyzedRecord.id).toBe(record.id);
+    expect(analyzedRecord.productId).toBe(record.productId);
+    expect(analyzedRecord.sourceContentId).toBe(record.sourceContentId);
+    expect(analyzedRecord.platforms).toEqual(record.platforms);
+    expect(analyzedRecord.targetMarkets).toEqual(record.targetMarkets);
+  });
+
+  it("defensively copies platform suitability and policy risk structures", async () => {
+    const { analysisService, repository, record } = await createStoredRecord(
+      buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Bathroom counter product setup" } }),
+    );
+
+    const result = await analysisService.analyzeById(record.id);
+    (result.analysis.platformSuitability?.[0]?.findings as PlatformSuitabilityFinding[]).push({
+      platform: "FACEBOOK",
+      code: "INJECTED_PLATFORM",
+      message: "Injected platform mutation",
+      evidence: [],
+    });
+    (result.analysis.policyRisk?.findings as PolicyRiskFinding[]).push({
+      category: "OTHER",
+      severity: "CRITICAL",
+      code: "INJECTED_POLICY",
+      message: "Injected policy mutation",
+      evidence: "Injected",
+    });
+
+    const stored = await repository.findById(record.id);
+
+    expect(stored?.analysis?.platformSuitability?.[0]?.findings.map((finding) => finding.code)).not.toContain("INJECTED_PLATFORM");
+    expect(stored?.analysis?.policyRisk?.findings.map((finding) => finding.code)).not.toContain("INJECTED_POLICY");
+  });
+
   it("preserves canonical identity and commerce associations during analysis", async () => {
     const { analysisService, record } = await createStoredRecord();
 
@@ -579,6 +799,8 @@ describe("CreativeAnalysisService", () => {
     expect(publicExports.CreativeAnalysisService).toBe(CreativeAnalysisService);
     expect(publicExports.CREATIVE_ANALYSIS_VERSION).toBe(CREATIVE_ANALYSIS_VERSION);
     expect(publicExports.CREATIVE_DIMENSION_WEIGHTS.HOOK).toBe(20);
+    expect(publicExports.PLATFORM_SUITABILITY_WEIGHTS.FACEBOOK.HOOK).toBe(20);
+    expect(publicExports.POLICY_RISK_CATEGORIES).toContain("UNSUPPORTED_CLAIM");
   });
 });
 

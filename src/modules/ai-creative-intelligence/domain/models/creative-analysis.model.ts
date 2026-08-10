@@ -1,3 +1,6 @@
+import type { PlatformSuitabilityAssessment } from "./creative-platform-suitability.model.js";
+import type { PolicyRiskAssessment } from "./creative-policy-risk.model.js";
+
 export const CREATIVE_ANALYSIS_VERSION = "SACP-CREATIVE-ANALYSIS-v1";
 
 export const CREATIVE_SCORE_LABEL = "Creative Quality / Readiness Score";
@@ -46,6 +49,8 @@ export interface CreativeAnalysisResult {
   readonly findings: readonly CreativeAnalysisFinding[];
   readonly strengths: readonly string[];
   readonly improvementOpportunities: readonly string[];
+  readonly platformSuitability?: readonly PlatformSuitabilityAssessment[];
+  readonly policyRisk?: PolicyRiskAssessment;
   readonly analysisVersion: typeof CREATIVE_ANALYSIS_VERSION;
   readonly metadata: CreativeAnalysisMetadata;
 }

@@ -93,6 +93,25 @@ export class CreativeAnalysisService {
       findings: analysis.findings.map((finding) => ({ ...finding })),
       strengths: [...analysis.strengths],
       improvementOpportunities: [...analysis.improvementOpportunities],
+      ...(analysis.platformSuitability === undefined
+        ? {}
+        : {
+            platformSuitability: analysis.platformSuitability.map((assessment) => ({
+              ...assessment,
+              findings: assessment.findings.map((finding) => ({
+                ...finding,
+                evidence: finding.evidence.map((evidence) => ({ ...evidence })),
+              })),
+            })),
+          }),
+      ...(analysis.policyRisk === undefined
+        ? {}
+        : {
+            policyRisk: {
+              ...analysis.policyRisk,
+              findings: analysis.policyRisk.findings.map((finding) => ({ ...finding })),
+            },
+          }),
       metadata: { ...analysis.metadata },
     };
   }
