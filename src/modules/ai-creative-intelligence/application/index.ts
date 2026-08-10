@@ -1,5 +1,6 @@
 export * from "./dto/create-creative-intelligence.request.js";
 export * from "./policy/creative-policy-risk-evaluator.js";
+export * from "./pipeline/creative-intelligence-pipeline.service.js";
 export * from "./ports/creative-intelligence.repository.js";
 export * from "./recommendations/creative-recommendation-engine.js";
 export * from "./scoring/creative-dimension-analyzers.js";

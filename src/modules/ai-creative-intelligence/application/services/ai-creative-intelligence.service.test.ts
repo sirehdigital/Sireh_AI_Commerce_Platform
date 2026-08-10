@@ -7,8 +7,10 @@ import {
   CREATIVE_DIMENSION_WEIGHTS,
   CREATIVE_PLATFORMS,
   CREATIVE_SCORE_LABEL,
+  CREATIVE_INTELLIGENCE_PIPELINE_VERSION,
   CreativeRecommendationEngine,
   CreativeAnalysisService,
+  CreativeIntelligencePipelineService,
   CreativeIntelligenceInvalidLifecycleTransitionError,
   CreativeIntelligenceInvalidRequestError,
   CreativeIntelligenceInvalidTimestampError,
@@ -21,6 +23,7 @@ import {
   type CreateCreativeIntelligenceRequest,
   type CreativeAnalysisDimension,
   type CreativeAnalysisResult,
+  type CreativeIntelligencePipelineResult,
   type CreativePlatform,
   type CreativeIntelligenceRecord,
   type CreativeRecommendation,
@@ -1039,6 +1042,181 @@ describe("CreativeAnalysisService", () => {
     expect(publicExports.CreativeRecommendationEngine).toBe(CreativeRecommendationEngine);
     expect(publicExports.CREATIVE_RECOMMENDATION_CATEGORIES).toContain("POLICY_RISK_REVIEW");
     expect(publicExports.CREATIVE_RECOMMENDATION_PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+  });
+});
+
+describe("CreativeIntelligencePipelineService", () => {
+  const createPipelineFixture = async (request: CreateCreativeIntelligenceRequest = buildRequest()) => {
+    const repository = new InMemoryCreativeIntelligenceRepository();
+    const creationService = new AiCreativeIntelligenceService(repository);
+    const pipelineService = new CreativeIntelligencePipelineService(repository);
+    const record = await creationService.createCreativeIntelligence(request);
+
+    return { repository, pipelineService, record };
+  };
+
+  it("runs the complete persisted creative intelligence pipeline end to end", async () => {
+    const { pipelineService, record } = await createPipelineFixture();
+
+    const result = await pipelineService.runById(record.id);
+
+    expect(result).toMatchObject({
+      creativeIntelligenceId: record.id,
+      creativeId: record.creativeId,
+      productId: record.productId,
+      sourceContentId: record.sourceContentId,
+      status: "ANALYZED",
+      versionMetadata: {
+        pipelineVersion: CREATIVE_INTELLIGENCE_PIPELINE_VERSION,
+        analysisVersion: CREATIVE_ANALYSIS_VERSION,
+        sourceRecordVersion: "SACP-CREATIVE-v1",
+      },
+      governance: {
+        advisoryOnly: true,
+        providerIndependent: true,
+        noPublishing: true,
+        humanReviewRequired: false,
+      },
+    });
+  });
+
+  it("returns all 04.03A-D outputs in the final result", async () => {
+    const { pipelineService, record } = await createPipelineFixture(
+      buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Scene" } }),
+    );
+
+    const result = await pipelineService.runById(record.id);
+
+    expect(result.creativeQuality.overallScore).toBeGreaterThan(0);
+    expect(result.creativeQuality.dimensions).toHaveLength(6);
+    expect(result.platformSuitability).toHaveLength(7);
+    expect(result.policyRisk.overallRisk).toBe("HIGH");
+    expect(result.recommendations.map((recommendation) => recommendation.code)).toContain("REC_HUMAN_REVIEW_REQUIRED");
+  });
+
+  it("keeps repeated equivalent preview output deterministic", async () => {
+    const record = await createRecord(buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Scene" } }));
+    const pipelineService = new CreativeIntelligencePipelineService(new InMemoryCreativeIntelligenceRepository());
+
+    const first = pipelineService.runPreview(record);
+    const second = pipelineService.runPreview(record);
+
+    expect(second.creativeQuality.dimensionScores).toEqual(first.creativeQuality.dimensionScores);
+    expect(second.platformSuitability).toEqual(first.platformSuitability);
+    expect(second.policyRisk).toEqual(first.policyRisk);
+    expect(second.recommendations).toEqual(first.recommendations);
+  });
+
+  it("preserves canonical identity and commerce associations", async () => {
+    const { pipelineService, record } = await createPipelineFixture(buildRequest({ platforms: ["TIKTOK", "EMAIL", "FACEBOOK"], targetMarkets: ["MY", "us"] }));
+
+    const result = await pipelineService.runById(record.id);
+
+    expect(result.creativeIntelligenceId).toBe(record.id);
+    expect(result.creativeId).toBe(record.creativeId);
+    expect(result.productId).toBe(record.productId);
+    expect(result.sourceContentId).toBe(record.sourceContentId);
+    expect(result.platforms).toEqual(record.platforms);
+    expect(result.targetMarkets).toEqual(record.targetMarkets);
+  });
+
+  it("keeps quality, suitability, policy risk, recommendations, and advisory metadata intact", async () => {
+    const { pipelineService, record } = await createPipelineFixture(
+      buildRequest({ brief: { headline: "Clinically Proven Tool", primaryText: "This is clinically proven.", visualConcept: "Bathroom counter product setup" } }),
+    );
+
+    const result = await pipelineService.runById(record.id);
+
+    expect(result.creativeQuality.overallScore).toBe(56);
+    expect(result.platformSuitability.map((assessment) => assessment.platform)).toEqual(CREATIVE_PLATFORMS);
+    expect(result.policyRisk.overallRisk).toBe("CRITICAL");
+    expect(result.recommendations.find((recommendation) => recommendation.code === "REC_POLICY_RISK_MEDICAL_OR_CLINICAL_CLAIM_DETECTED")).toMatchObject({
+      priority: "CRITICAL",
+      advisoryOnly: true,
+    });
+    expect(result.governance.humanReviewRequired).toBe(true);
+  });
+
+  it("persists final analysis through the repository", async () => {
+    const { repository, pipelineService, record } = await createPipelineFixture();
+
+    const result = await pipelineService.runById(record.id);
+    const stored = await repository.findById(record.id);
+
+    expect(stored?.analysisStatus).toBe("ANALYZED");
+    expect(stored?.analysis?.overallScore).toBe(result.creativeQuality.overallScore);
+    expect(stored?.analysis?.platformSuitability).toEqual(result.platformSuitability);
+    expect(stored?.analysis?.policyRisk).toEqual(result.policyRisk);
+    expect(stored?.analysis?.recommendations).toEqual(result.recommendations);
+  });
+
+  it("returns defensive copies from the pipeline boundary", async () => {
+    const { repository, pipelineService, record } = await createPipelineFixture(
+      buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Bathroom counter product setup" } }),
+    );
+
+    const result = await pipelineService.runById(record.id);
+    (result.platformSuitability[0]?.findings as PlatformSuitabilityFinding[]).push({
+      platform: "FACEBOOK",
+      code: "INJECTED_PIPELINE_PLATFORM",
+      message: "Injected platform mutation",
+      evidence: [],
+    });
+    (result.policyRisk.findings as PolicyRiskFinding[]).push({
+      category: "OTHER",
+      severity: "CRITICAL",
+      code: "INJECTED_PIPELINE_POLICY",
+      message: "Injected policy mutation",
+      evidence: "Injected",
+    });
+    (result.recommendations as CreativeRecommendation[]).push({
+      code: "INJECTED_PIPELINE_RECOMMENDATION",
+      category: "HUMAN_REVIEW_REQUIRED",
+      priority: "CRITICAL",
+      reason: "Injected recommendation mutation",
+      recommendedAction: "Injected action",
+      evidence: ["INJECTED_PIPELINE_POLICY"],
+      advisoryOnly: true,
+    });
+    (result.creativeQuality.dimensions[0]?.strengths as string[]).push("Injected pipeline strength");
+
+    const stored = await repository.findById(record.id);
+
+    expect(stored?.analysis?.platformSuitability?.[0]?.findings.map((finding) => finding.code)).not.toContain("INJECTED_PIPELINE_PLATFORM");
+    expect(stored?.analysis?.policyRisk?.findings.map((finding) => finding.code)).not.toContain("INJECTED_PIPELINE_POLICY");
+    expect(stored?.analysis?.recommendations?.map((recommendation) => recommendation.code)).not.toContain("INJECTED_PIPELINE_RECOMMENDATION");
+    expect(stored?.analysis?.dimensions[0]?.strengths).not.toContain("Injected pipeline strength");
+  });
+
+  it("uses the existing lifecycle guard for idempotent persisted reruns", async () => {
+    const { pipelineService, record } = await createPipelineFixture();
+
+    await pipelineService.runById(record.id);
+
+    await expect(pipelineService.runById(record.id)).rejects.toThrow(CreativeIntelligenceInvalidLifecycleTransitionError);
+  });
+
+  it("uses existing not-found handling for missing IDs", async () => {
+    const pipelineService = new CreativeIntelligencePipelineService(new InMemoryCreativeIntelligenceRepository());
+
+    await expect(pipelineService.runById("missing")).rejects.toThrow(CreativeIntelligenceRecordNotFoundError);
+  });
+
+  it("supports persisted pipeline lookup by creative ID", async () => {
+    const { pipelineService, record } = await createPipelineFixture();
+
+    const result = await pipelineService.runByCreativeId(record.creativeId);
+
+    expect(result.creativeIntelligenceId).toBe(record.id);
+    expect(result.status).toBe("ANALYZED");
+  });
+
+  it("exports the public pipeline API", () => {
+    expect(publicExports.CreativeIntelligencePipelineService).toBe(CreativeIntelligencePipelineService);
+    expect(publicExports.CREATIVE_INTELLIGENCE_PIPELINE_VERSION).toBe(CREATIVE_INTELLIGENCE_PIPELINE_VERSION);
+    const _pipelineResult: CreativeIntelligencePipelineResult | undefined = undefined;
+
+    expect(_pipelineResult).toBeUndefined();
   });
 });
 
