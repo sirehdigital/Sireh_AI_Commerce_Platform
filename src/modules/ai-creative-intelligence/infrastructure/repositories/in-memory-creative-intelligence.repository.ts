@@ -90,6 +90,14 @@ export class InMemoryCreativeIntelligenceRepository implements CreativeIntellige
                       findings: record.analysis.policyRisk.findings.map((finding) => ({ ...finding })),
                     },
                   }),
+              ...(record.analysis.recommendations === undefined
+                ? {}
+                : {
+                    recommendations: record.analysis.recommendations.map((recommendation) => ({
+                      ...recommendation,
+                      evidence: [...recommendation.evidence],
+                    })),
+                  }),
               metadata: { ...record.analysis.metadata },
             },
           }),

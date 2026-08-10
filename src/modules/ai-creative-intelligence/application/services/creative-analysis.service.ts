@@ -112,6 +112,14 @@ export class CreativeAnalysisService {
               findings: analysis.policyRisk.findings.map((finding) => ({ ...finding })),
             },
           }),
+      ...(analysis.recommendations === undefined
+        ? {}
+        : {
+            recommendations: analysis.recommendations.map((recommendation) => ({
+              ...recommendation,
+              evidence: [...recommendation.evidence],
+            })),
+          }),
       metadata: { ...analysis.metadata },
     };
   }

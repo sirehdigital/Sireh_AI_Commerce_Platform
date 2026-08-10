@@ -1,5 +1,6 @@
 import type { CreativeIntelligenceRecord } from "../../domain/models/creative-intelligence.model.js";
 import { CreativePolicyRiskEvaluator } from "../policy/creative-policy-risk-evaluator.js";
+import { CreativeRecommendationEngine } from "../recommendations/creative-recommendation-engine.js";
 import { PlatformSuitabilityEvaluator } from "../suitability/platform-suitability-evaluator.js";
 import {
   CREATIVE_ANALYSIS_DIMENSIONS,
@@ -39,6 +40,7 @@ interface TextSignals {
 export class CreativeDimensionAnalyzer {
   private readonly platformSuitabilityEvaluator = new PlatformSuitabilityEvaluator();
   private readonly policyRiskEvaluator = new CreativePolicyRiskEvaluator();
+  private readonly recommendationEngine = new CreativeRecommendationEngine();
 
   public analyze(record: CreativeIntelligenceRecord): CreativeAnalysisResult {
     const dimensions = CREATIVE_ANALYSIS_DIMENSIONS.map((dimension) => this.analyzeDimension(dimension, record));
@@ -69,10 +71,15 @@ export class CreativeDimensionAnalyzer {
       },
     };
 
-    return {
+    const enrichedAnalysis: CreativeAnalysisResult = {
       ...analysis,
       platformSuitability: this.platformSuitabilityEvaluator.evaluate(analysis),
       policyRisk: this.policyRiskEvaluator.evaluate(record),
+    };
+
+    return {
+      ...enrichedAnalysis,
+      recommendations: this.recommendationEngine.recommend(enrichedAnalysis),
     };
   }
 

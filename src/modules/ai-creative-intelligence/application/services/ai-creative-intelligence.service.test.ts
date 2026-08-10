@@ -7,6 +7,7 @@ import {
   CREATIVE_DIMENSION_WEIGHTS,
   CREATIVE_PLATFORMS,
   CREATIVE_SCORE_LABEL,
+  CreativeRecommendationEngine,
   CreativeAnalysisService,
   CreativeIntelligenceInvalidLifecycleTransitionError,
   CreativeIntelligenceInvalidRequestError,
@@ -22,6 +23,8 @@ import {
   type CreativeAnalysisResult,
   type CreativePlatform,
   type CreativeIntelligenceRecord,
+  type CreativeRecommendation,
+  type CreativeRecommendationCategory,
   type PlatformSuitabilityFinding,
   type PolicyRiskCategory,
   type PolicyRiskFinding,
@@ -69,6 +72,9 @@ const withoutBrandContext = (request: CreateCreativeIntelligenceRequest): Create
 const platformAssessmentFor = (analysis: CreativeAnalysisResult, platform: CreativePlatform) => analysis.platformSuitability?.find((assessment) => assessment.platform === platform);
 
 const policyFindingFor = (analysis: CreativeAnalysisResult, category: PolicyRiskCategory) => analysis.policyRisk?.findings.find((finding) => finding.category === category);
+
+const recommendationFor = (analysis: CreativeAnalysisResult, category: CreativeRecommendationCategory) =>
+  analysis.recommendations?.find((recommendation) => recommendation.category === category);
 
 describe("AiCreativeIntelligenceService", () => {
   it("creates a valid image creative", async () => {
@@ -737,6 +743,223 @@ describe("CreativeAnalysisService", () => {
     expect(analyzedRecord.targetMarkets).toEqual(record.targetMarkets);
   });
 
+  it("recommends hook improvement from a low hook score", async () => {
+    const record = await createRecord(buildRequest({ brief: { headline: "Fast Morning Polish", primaryText: "A compact styling tool helps daily routines.", callToAction: "Shop Now" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "IMPROVE_HOOK")).toMatchObject({
+      code: "REC_IMPROVE_HOOK",
+      priority: "HIGH",
+      dimension: "HOOK",
+      advisoryOnly: true,
+    });
+  });
+
+  it("recommends headline improvement from a low headline score", async () => {
+    const record = await createRecord(buildRequest({ brief: { hook: "Style faster before the morning rush", primaryText: "A compact styling tool helps daily routines.", callToAction: "Shop Now" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "IMPROVE_HEADLINE")).toMatchObject({
+      code: "REC_IMPROVE_HEADLINE",
+      priority: "HIGH",
+      dimension: "HEADLINE",
+    });
+  });
+
+  it("recommends CTA improvement from a weak CTA score", async () => {
+    const record = await createRecord(buildRequest({ brief: { callToAction: "Details", visualConcept: "Warm vanity scene with product beside travel essentials" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "IMPROVE_CTA")).toMatchObject({
+      code: "REC_IMPROVE_CTA",
+      priority: "MEDIUM",
+      dimension: "CTA",
+    });
+  });
+
+  it("recommends visual concept improvement from weak visual readiness", async () => {
+    const record = await createRecord(buildRequest({ brief: { hook: "Style faster before the morning rush", headline: "Fast Morning Polish", primaryText: "A compact styling tool helps daily routines.", callToAction: "Shop Now" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "IMPROVE_VISUAL_CONCEPT")).toMatchObject({
+      code: "REC_IMPROVE_VISUAL_CONCEPT",
+      priority: "HIGH",
+      dimension: "VISUAL_CONCEPT",
+    });
+  });
+
+  it("recommends brand consistency improvement when brand context is limited", async () => {
+    const record = await createRecord(withoutBrandContext(buildRequest()));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "IMPROVE_BRAND_CONSISTENCY")).toMatchObject({
+      code: "REC_IMPROVE_BRAND_CONSISTENCY",
+      priority: "MEDIUM",
+      dimension: "BRAND_CONSISTENCY",
+    });
+  });
+
+  it("recommends platform adaptation for platform suitability review states", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          hook: "Fresh style in five minutes",
+          headline: "Fast Morning Polish",
+          primaryText: "A compact styling tool helps keep daily routines polished and simple.",
+          visualConcept: "Warm vanity scene with product beside travel essentials",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+    const recommendation = analysis.recommendations?.find((entry) => entry.code === "REC_PLATFORM_ADAPTATION_FACEBOOK");
+
+    expect(platformAssessmentFor(analysis, "FACEBOOK")?.status).toBe("NEEDS_REVIEW");
+    expect(recommendation).toMatchObject({
+      category: "PLATFORM_ADAPTATION",
+      priority: "MEDIUM",
+      platform: "FACEBOOK",
+      advisoryOnly: true,
+    });
+  });
+
+  it("recommends high-priority policy review for high policy risk", async () => {
+    const record = await createRecord(buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Bathroom counter product setup" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+    const recommendation = analysis.recommendations?.find((entry) => entry.code === "REC_POLICY_RISK_UNSUPPORTED_CLAIM_PROVEN");
+
+    expect(recommendation).toMatchObject({
+      category: "POLICY_RISK_REVIEW",
+      priority: "HIGH",
+      riskCategory: "UNSUPPORTED_CLAIM",
+      riskSeverity: "HIGH",
+    });
+  });
+
+  it("recommends critical policy review for critical policy risk", async () => {
+    const record = await createRecord(buildRequest({ brief: { headline: "Clinically Proven Tool", primaryText: "This is clinically proven.", visualConcept: "Bathroom counter product setup" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+    const recommendation = analysis.recommendations?.find((entry) => entry.code === "REC_POLICY_RISK_MEDICAL_OR_CLINICAL_CLAIM_DETECTED");
+
+    expect(recommendation).toMatchObject({
+      category: "POLICY_RISK_REVIEW",
+      priority: "CRITICAL",
+      riskCategory: "MEDICAL_OR_CLINICAL_CLAIM",
+      riskSeverity: "CRITICAL",
+    });
+  });
+
+  it("adds a human review recommendation when policy risk requires review", async () => {
+    const record = await createRecord(buildRequest({ brief: { primaryText: "This is scientifically proven.", visualConcept: "Bathroom counter product setup" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(recommendationFor(analysis, "HUMAN_REVIEW_REQUIRED")).toMatchObject({
+      code: "REC_HUMAN_REVIEW_REQUIRED",
+      priority: "HIGH",
+      riskSeverity: "HIGH",
+    });
+  });
+
+  it("does not add unnecessary recommendations for strong low-risk creative", async () => {
+    const record = await createRecord();
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(analysis.recommendations).toEqual([]);
+  });
+
+  it("deduplicates recommendations by stable code", async () => {
+    const record = await createRecord(buildRequest({ brief: { hook: "Rush", visualConcept: "Scene" } }));
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+    const codes = analysis.recommendations?.map((recommendation) => recommendation.code) ?? [];
+
+    expect(new Set(codes).size).toBe(codes.length);
+    expect(codes.filter((code) => code === "REC_IMPROVE_HOOK")).toHaveLength(1);
+  });
+
+  it("keeps recommendation order deterministic by source analysis order", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          primaryText: "Scientifically proven and clinically proven with guaranteed results.",
+          visualConcept: "Scene",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(analysis.recommendations?.map((recommendation) => recommendation.code)).toEqual([
+      "REC_IMPROVE_HOOK",
+      "REC_IMPROVE_HEADLINE",
+      "REC_IMPROVE_CTA",
+      "REC_IMPROVE_VISUAL_CONCEPT",
+      "REC_PLATFORM_ADAPTATION_FACEBOOK",
+      "REC_PLATFORM_ADAPTATION_INSTAGRAM",
+      "REC_PLATFORM_ADAPTATION_THREADS",
+      "REC_PLATFORM_ADAPTATION_TIKTOK",
+      "REC_PLATFORM_ADAPTATION_SHOPIFY",
+      "REC_PLATFORM_ADAPTATION_EMAIL",
+      "REC_PLATFORM_ADAPTATION_OTHER",
+      "REC_POLICY_RISK_UNSUPPORTED_CLAIM_PROVEN",
+      "REC_POLICY_RISK_MEDICAL_OR_CLINICAL_CLAIM_DETECTED",
+      "REC_POLICY_RISK_GUARANTEED_OUTCOME_PROMISE",
+      "REC_HUMAN_REVIEW_REQUIRED",
+    ]);
+  });
+
+  it("keeps recommendation output deterministic for repeated input", async () => {
+    const record = await createRecord(buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Scene" } }));
+    const analysisService = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository());
+
+    const first = analysisService.analyzePreview(record);
+    const second = analysisService.analyzePreview(record);
+
+    expect(second.recommendations).toEqual(first.recommendations);
+  });
+
+  it("maps recommendation priorities from dimension, platform, and policy severity", async () => {
+    const record = await createRecord(
+      buildRequest({
+        brief: {
+          headline: "Daily Polish",
+          primaryText: "Scientifically proven with guaranteed results.",
+          visualConcept: "Scene",
+        },
+      }),
+    );
+
+    const analysis = new CreativeAnalysisService(new InMemoryCreativeIntelligenceRepository()).analyzePreview(record);
+
+    expect(analysis.recommendations?.find((recommendation) => recommendation.code === "REC_IMPROVE_HOOK")?.priority).toBe("HIGH");
+    expect(analysis.recommendations?.find((recommendation) => recommendation.code === "REC_IMPROVE_VISUAL_CONCEPT")?.priority).toBe("MEDIUM");
+    expect(analysis.recommendations?.find((recommendation) => recommendation.code === "REC_PLATFORM_ADAPTATION_FACEBOOK")?.priority).toBe("HIGH");
+    expect(analysis.recommendations?.find((recommendation) => recommendation.code === "REC_POLICY_RISK_UNSUPPORTED_CLAIM_PROVEN")?.priority).toBe("HIGH");
+  });
+
+  it("preserves identity and associations while adding recommendations", async () => {
+    const { analysisService, record } = await createStoredRecord(buildRequest({ brief: { hook: "Rush", visualConcept: "Scene" } }));
+
+    const result = await analysisService.analyzeById(record.id);
+
+    expect(result.analysis.recommendations?.length).toBeGreaterThan(0);
+    expect(result.record.id).toBe(record.id);
+    expect(result.record.creativeId).toBe(record.creativeId);
+    expect(result.record.productId).toBe(record.productId);
+    expect(result.record.sourceContentId).toBe(record.sourceContentId);
+    expect(result.record.platforms).toEqual(record.platforms);
+    expect(result.record.targetMarkets).toEqual(record.targetMarkets);
+  });
+
   it("defensively copies platform suitability and policy risk structures", async () => {
     const { analysisService, repository, record } = await createStoredRecord(
       buildRequest({ brief: { primaryText: "Scientifically proven with guaranteed results.", visualConcept: "Bathroom counter product setup" } }),
@@ -756,11 +979,23 @@ describe("CreativeAnalysisService", () => {
       message: "Injected policy mutation",
       evidence: "Injected",
     });
+    (result.analysis.recommendations as CreativeRecommendation[]).push({
+      code: "INJECTED_RECOMMENDATION",
+      category: "POLICY_RISK_REVIEW",
+      priority: "CRITICAL",
+      reason: "Injected recommendation mutation",
+      recommendedAction: "Injected action",
+      evidence: ["INJECTED_POLICY"],
+      advisoryOnly: true,
+    });
+    (result.analysis.recommendations?.[0]?.evidence as string[]).push("INJECTED_EVIDENCE");
 
     const stored = await repository.findById(record.id);
 
     expect(stored?.analysis?.platformSuitability?.[0]?.findings.map((finding) => finding.code)).not.toContain("INJECTED_PLATFORM");
     expect(stored?.analysis?.policyRisk?.findings.map((finding) => finding.code)).not.toContain("INJECTED_POLICY");
+    expect(stored?.analysis?.recommendations?.map((recommendation) => recommendation.code)).not.toContain("INJECTED_RECOMMENDATION");
+    expect(stored?.analysis?.recommendations?.[0]?.evidence).not.toContain("INJECTED_EVIDENCE");
   });
 
   it("preserves canonical identity and commerce associations during analysis", async () => {
@@ -801,6 +1036,9 @@ describe("CreativeAnalysisService", () => {
     expect(publicExports.CREATIVE_DIMENSION_WEIGHTS.HOOK).toBe(20);
     expect(publicExports.PLATFORM_SUITABILITY_WEIGHTS.FACEBOOK.HOOK).toBe(20);
     expect(publicExports.POLICY_RISK_CATEGORIES).toContain("UNSUPPORTED_CLAIM");
+    expect(publicExports.CreativeRecommendationEngine).toBe(CreativeRecommendationEngine);
+    expect(publicExports.CREATIVE_RECOMMENDATION_CATEGORIES).toContain("POLICY_RISK_REVIEW");
+    expect(publicExports.CREATIVE_RECOMMENDATION_PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
   });
 });
 
