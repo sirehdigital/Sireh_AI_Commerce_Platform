@@ -8,6 +8,8 @@ import {
   BudgetChannelCreativeAllocationEngine,
   BUDGET_ALLOCATION_PRIORITIES,
   BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
+  CampaignStrategyPipelineService,
+  CAMPAIGN_STRATEGY_PIPELINE_VERSION,
   CampaignStrategyRecommendationRiskEngine,
   CAMPAIGN_STRATEGY_READINESS_STATUSES,
   CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES,
@@ -34,6 +36,7 @@ import {
   type AudienceMarketStrategy,
   type BudgetChannelCreativeAllocation,
   type CampaignObjectiveFunnelStrategy,
+  type CampaignStrategyPipelineResult,
   type CampaignStrategyRecommendationRiskResult,
 } from "../../index.js";
 import * as publicExports from "../../../ai-campaign-strategy/index.js";
@@ -1222,6 +1225,286 @@ describe("CampaignStrategyRecommendationRiskEngine", () => {
     expect(publicExports.CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION).toBe(CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION);
     expect(publicExports.CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES).toEqual(CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES);
     expect(publicExports.CAMPAIGN_STRATEGY_RISK_CATEGORIES).toEqual(CAMPAIGN_STRATEGY_RISK_CATEGORIES);
+  });
+});
+
+describe("CampaignStrategyPipelineService", () => {
+  const pipeline = new CampaignStrategyPipelineService();
+  const strategyService = new AiCampaignStrategyService();
+  const allocationEngine = new BudgetChannelCreativeAllocationEngine();
+  const recommendationRiskEngine = new CampaignStrategyRecommendationRiskEngine();
+  const run = (
+    request: CreateCampaignStrategyRequest = buildRequest({ objective: "CONVERSION" }),
+    budgetInput: Parameters<CampaignStrategyPipelineService["runPipeline"]>[1] = {},
+  ): CampaignStrategyPipelineResult => pipeline.runPipeline(request, budgetInput);
+  const buildAwarenessRequest = (): CreateCampaignStrategyRequest =>
+    buildRequest({
+      objective: "BRAND_AWARENESS",
+      audience: { ...buildRequest().audience, awarenessLevel: "UNAWARE", objections: [], buyingTriggers: [] },
+      offer: { type: "STANDARD", headline: "Meet the daily styling helper", terms: [] },
+    });
+  const buildMofuRequest = (): CreateCampaignStrategyRequest =>
+    buildRequest({
+      objective: "LEAD_GENERATION",
+      audience: { ...buildRequest().audience, buyingTriggers: ["Download routine guide"] },
+      offer: { type: "STANDARD", headline: "Join the routine guide", terms: [] },
+    });
+  const percentageTotal = (values: readonly number[]) => Math.round(values.reduce((sum, value) => sum + value, 0) * 100) / 100;
+
+  it("runs the complete end-to-end campaign strategy pipeline", () => {
+    const request = buildRequest({ objective: "CONVERSION" });
+    const result = run(request, { totalBudget: 1000, currency: "USD" });
+
+    expect(result.campaignStrategyId).toBe(strategyService.createStrategy(request).id);
+    expect(result.objective).toBe("CONVERSION");
+    expect(result.funnelStage).toBe("BOFU");
+    expect(result.intent).toBe("HIGH");
+    expect(result.advisoryOnly).toBe(true);
+  });
+
+  it("returns all A-E outputs in the final result", () => {
+    const result = run();
+
+    expect(result.foundationStrategy.strategyVersion).toBe("SACP-04.04A");
+    expect(result.objectiveFunnelStrategy.metadata.strategyVersion).toBe(CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION);
+    expect(result.audienceStrategy.metadata.strategyVersion).toBe(AUDIENCE_MARKET_STRATEGY_VERSION);
+    expect(result.budgetAllocation.metadata.strategyVersion).toBe(BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION);
+    expect(result.recommendationRiskResult.metadata.strategyVersion).toBe(CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION);
+  });
+
+  it("runs an awareness TOFU pipeline", () => {
+    const result = run(buildAwarenessRequest());
+
+    expect(result.objective).toBe("AWARENESS");
+    expect(result.funnelStage).toBe("TOFU");
+    expect(result.intent).toBe("LOW");
+    expect(result.audienceStrategy.audienceSegment).toBe("DISCOVERY");
+  });
+
+  it("runs a MOFU pipeline", () => {
+    const result = run(buildMofuRequest());
+
+    expect(result.objective).toBe("LEAD_GENERATION");
+    expect(result.funnelStage).toBe("MOFU");
+    expect(result.intent).toBe("MEDIUM");
+    expect(result.audienceStrategy.audienceSegment).toBe("SOLUTION_AWARE");
+  });
+
+  it("runs a BOFU conversion pipeline", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.objective).toBe("CONVERSION");
+    expect(result.funnelStage).toBe("BOFU");
+    expect(result.channelAllocation.map((channel) => channel.channel)).toContain("RETARGETING");
+  });
+
+  it("runs a retention pipeline", () => {
+    const result = run(buildRequest({ objective: "CUSTOMER_RETENTION" }));
+
+    expect(result.objective).toBe("RETENTION");
+    expect(result.funnelStage).toBe("RETENTION");
+    expect(result.creativeAllocation.map((creative) => creative.creativeRole)).toContain("RETENTION");
+  });
+
+  it("supports budget-present pipeline output", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }), { totalBudget: 250.25, currency: "myr" });
+
+    expect(result.budgetAllocation.totalBudget).toBe(250.25);
+    expect(result.budgetAllocation.currency).toBe("MYR");
+    expect(result.channelAllocation.every((channel) => channel.allocationAmount !== undefined)).toBe(true);
+  });
+
+  it("supports percentage-only output when budget is absent", () => {
+    const result = run();
+
+    expect(result.budgetAllocation.totalBudget).toBeUndefined();
+    expect(result.channelAllocation.every((channel) => channel.allocationAmount === undefined)).toBe(true);
+  });
+
+  it("preserves canonical identity", () => {
+    const request = buildRequest({ objective: "CONVERSION" });
+    const source = strategyService.createStrategy(request);
+    const result = run(request);
+
+    expect(result.campaignStrategyId).toBe(source.id);
+    expect(result.objectiveFunnelStrategy.campaignStrategyId).toBe(source.id);
+    expect(result.audienceStrategy.campaignStrategyId).toBe(source.id);
+    expect(result.budgetAllocation.campaignStrategyId).toBe(source.id);
+    expect(result.recommendationRiskResult.campaignStrategyId).toBe(source.id);
+  });
+
+  it("preserves product context", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.product).toEqual(result.foundationStrategy.product);
+    expect(result.product.productId).toBe("product-100");
+  });
+
+  it("preserves market associations", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US", "MY"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY", "SG"] },
+      }),
+    );
+
+    expect(result.markets.map((market) => market.market)).toEqual(["US", "MY", "SG"]);
+    expect(result.marketStrategy.geographicPriority).toEqual(result.audienceStrategy.geographicPriority);
+  });
+
+  it("preserves channel associations", () => {
+    const result = run(buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] }));
+
+    expect(result.channels).toEqual(["EMAIL", "TIKTOK"]);
+    expect(result.channelAllocation.map((channel) => channel.channel)).toEqual(["EMAIL", "TIKTOK"]);
+  });
+
+  it("keeps allocation totals valid", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }), { totalBudget: 1000.01, currency: "USD" });
+    const amountTotal = Math.round(result.channelAllocation.reduce((sum, channel) => sum + (channel.allocationAmount ?? 0), 0) * 100) / 100;
+
+    expect(percentageTotal(result.channelAllocation.map((channel) => channel.allocationPercentage))).toBe(100);
+    expect(percentageTotal(result.creativeAllocation.map((creative) => creative.recommendedPercentage))).toBe(100);
+    expect(amountTotal).toBe(1000.01);
+  });
+
+  it("preserves recommendations from the recommendation and risk engine", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.recommendations).toEqual(result.recommendationRiskResult.recommendations);
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("MARKET_ALIGNMENT");
+  });
+
+  it("preserves strategic risks from the recommendation and risk engine", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.strategicRisks).toEqual(result.recommendationRiskResult.riskFindings);
+    expect(result.strategicRisks.map((risk) => risk.category)).toContain("MARKET_EVIDENCE_INSUFFICIENT");
+  });
+
+  it("returns READY for coherent low-risk pipeline output", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.readinessStatus).toBe("READY");
+    expect(result.requiresHumanReview).toBe(false);
+  });
+
+  it("returns READY_WITH_REVIEW when advisory risks exist", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.readinessStatus).toBe("READY_WITH_REVIEW");
+  });
+
+  it("propagates NOT_READY and CRITICAL readiness from composed A-E output", () => {
+    const strategy = strategyService.createStrategy(buildRequest({ objective: "CONVERSION" }));
+    const allocation = allocationEngine.allocateFromStrategy(strategy);
+    const recommendationRisk = recommendationRiskEngine.evaluateFromAllocation({
+      ...allocation,
+      objectiveFunnelStrategy: {
+        ...allocation.objectiveFunnelStrategy,
+        campaignStrategyId: "ai-campaign-strategy:mismatched",
+      },
+    });
+    const result = pipeline.finalizeFromRecommendationRiskResult(strategy, recommendationRisk);
+
+    expect(result.readinessStatus).toBe("NOT_READY");
+    expect(result.strategicRisks.map((risk) => risk.severity)).toContain("CRITICAL");
+  });
+
+  it("propagates human-review requirements", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.requiresHumanReview).toBe(true);
+    expect(result.recommendationRiskResult.readiness.requiresHumanReview).toBe(true);
+  });
+
+  it("propagates advisory-only governance", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.advisoryOnly).toBe(true);
+    expect(result.objectiveFunnelStrategy.advisoryOnly).toBe(true);
+    expect(result.audienceStrategy.advisoryOnly).toBe(true);
+    expect(result.budgetAllocation.advisoryOnly).toBe(true);
+    expect(result.recommendationRiskResult.advisoryOnly).toBe(true);
+  });
+
+  it("keeps repeated equivalent pipeline output deterministic", () => {
+    const request = buildRequest({ objective: "CONVERSION" });
+
+    expect(run(request, { totalBudget: 333.33, currency: "USD" })).toEqual(run(request, { totalBudget: 333.33, currency: "USD" }));
+  });
+
+  it("preserves stable recommendation and risk order", () => {
+    const result = run(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.strategicRisks.map((risk) => risk.code)).toEqual(result.recommendationRiskResult.riskFindings.map((risk) => risk.code));
+    expect(result.recommendations.map((recommendation) => recommendation.code)).toEqual(
+      result.recommendationRiskResult.recommendations.map((recommendation) => recommendation.code),
+    );
+  });
+
+  it("returns defensive copies from repeated pipeline calls", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+    (result.product.keyBenefits as string[]).push("Injected");
+    (result.channelAllocation as (typeof result.channelAllocation)[number][]).push({
+      channel: "EMAIL",
+      priority: "SUPPORTING",
+      allocationPercentage: 0,
+      rationale: "Injected",
+    });
+    const fresh = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(fresh.product.keyBenefits).not.toContain("Injected");
+    expect(fresh.channelAllocation.map((channel) => channel.rationale)).not.toContain("Injected");
+  });
+
+  it("rejects invalid input through existing foundation validation", () => {
+    expect(() => run(buildRequest({ objective: "NOT_REAL" as CreateCampaignStrategyRequest["objective"] }))).toThrow(UnsupportedObjectiveError);
+  });
+
+  it("returns stable pipeline metadata", () => {
+    const result = run(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.metadata).toEqual({
+      pipelineVersion: CAMPAIGN_STRATEGY_PIPELINE_VERSION,
+      foundationStrategyVersion: "SACP-04.04A",
+      objectiveFunnelStrategyVersion: CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+      audienceMarketStrategyVersion: AUDIENCE_MARKET_STRATEGY_VERSION,
+      allocationStrategyVersion: BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
+      recommendationRiskStrategyVersion: CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION,
+      compositionRule: "FOUNDATION_THEN_OBJECTIVE_FUNNEL_THEN_AUDIENCE_MARKET_THEN_ALLOCATION_THEN_RECOMMENDATION_RISK",
+      idempotencyBehavior: "STATELESS_EQUIVALENT_INPUT_RERUN_SAFE",
+    });
+  });
+
+  it("exports the public campaign strategy pipeline API", () => {
+    expect(publicExports.CampaignStrategyPipelineService).toBe(CampaignStrategyPipelineService);
+    expect(publicExports.CAMPAIGN_STRATEGY_PIPELINE_VERSION).toBe(CAMPAIGN_STRATEGY_PIPELINE_VERSION);
   });
 });
 
