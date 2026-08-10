@@ -5,13 +5,18 @@ import {
   AudienceMarketStrategyEngine,
   AUDIENCE_MARKET_SEGMENTS,
   AUDIENCE_MARKET_STRATEGY_VERSION,
+  BudgetChannelCreativeAllocationEngine,
+  BUDGET_ALLOCATION_PRIORITIES,
+  BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
   CampaignObjectiveFunnelStrategyEngine,
   CAMPAIGN_INTENT_LEVELS,
   CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
   CAMPAIGN_STRATEGIC_FUNNEL_STAGES,
   CAMPAIGN_STRATEGIC_OBJECTIVES,
+  CREATIVE_ALLOCATION_ROLES,
   InMemoryCampaignStrategyRepository,
   InvalidAudienceError,
+  InvalidCampaignRequestError,
   InvalidOfferError,
   InvalidProductContextError,
   InvalidTimestampError,
@@ -20,6 +25,7 @@ import {
   UnsupportedObjectiveError,
   type CreateCampaignStrategyRequest,
   type AudienceMarketStrategy,
+  type BudgetChannelCreativeAllocation,
   type CampaignObjectiveFunnelStrategy,
 } from "../../index.js";
 import * as publicExports from "../../../ai-campaign-strategy/index.js";
@@ -706,6 +712,196 @@ describe("AudienceMarketStrategyEngine", () => {
     expect(publicExports.AUDIENCE_MARKET_SEGMENTS).toEqual(AUDIENCE_MARKET_SEGMENTS);
     expect(publicExports.MARKET_PRIORITY_LEVELS).toEqual(["PRIMARY", "SECONDARY", "EXPERIMENTAL", "NOT_RECOMMENDED"]);
     expect(publicExports.AUDIENCE_MARKET_STRATEGY_VERSION).toBe(AUDIENCE_MARKET_STRATEGY_VERSION);
+  });
+});
+
+describe("BudgetChannelCreativeAllocationEngine", () => {
+  const allocate = (
+    request: CreateCampaignStrategyRequest = buildRequest(),
+    budgetInput: Parameters<BudgetChannelCreativeAllocationEngine["allocateStrategy"]>[1] = {},
+  ): BudgetChannelCreativeAllocation => new BudgetChannelCreativeAllocationEngine().allocateStrategy(request, budgetInput);
+
+  const percentageTotal = (values: readonly number[]) => Math.round(values.reduce((sum, value) => sum + value, 0) * 100) / 100;
+
+  const amountTotal = (values: readonly number[]) => Math.round(values.reduce((sum, value) => sum + value, 0) * 100) / 100;
+
+  it("allocates TOFU budget toward existing discovery channels", () => {
+    const allocation = allocate(
+      buildRequest({
+        objective: "BRAND_AWARENESS",
+        audience: { ...buildRequest().audience, awarenessLevel: "UNAWARE", objections: [], buyingTriggers: [] },
+        offer: { type: "STANDARD", headline: "Meet the daily styling helper", terms: [] },
+      }),
+    );
+
+    expect(allocation.objectiveFunnelStrategy.funnelStage).toBe("TOFU");
+    expect(allocation.channelAllocations.map((entry) => [entry.channel, entry.priority, entry.allocationPercentage])).toEqual([
+      ["TIKTOK", "PRIMARY", 42.86],
+      ["INSTAGRAM", "PRIMARY", 42.86],
+      ["FACEBOOK", "TEST", 14.28],
+    ]);
+  });
+
+  it("allocates MOFU budget in a balanced channel mix", () => {
+    const allocation = allocate(
+      buildRequest({
+        objective: "LEAD_GENERATION",
+        audience: { ...buildRequest().audience, buyingTriggers: ["Download routine guide"] },
+        offer: { type: "STANDARD", headline: "Join the routine guide", terms: [] },
+      }),
+    );
+
+    expect(allocation.objectiveFunnelStrategy.funnelStage).toBe("MOFU");
+    expect(allocation.channelAllocations.map((entry) => entry.allocationPercentage)).toEqual([33.34, 33.33, 33.33]);
+  });
+
+  it("allocates BOFU budget toward high-intent and retargeting channels", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(allocation.objectiveFunnelStrategy.funnelStage).toBe("BOFU");
+    expect(allocation.channelAllocations.map((entry) => [entry.channel, entry.priority, entry.allocationPercentage])).toEqual([
+      ["TIKTOK", "PRIMARY", 21.43],
+      ["FACEBOOK", "PRIMARY", 21.43],
+      ["SHOPIFY_ONSITE", "PRIMARY", 21.43],
+      ["EMAIL", "SUPPORTING", 7.14],
+      ["RETARGETING", "RETARGETING", 28.57],
+    ]);
+  });
+
+  it("allocates retention budget toward owned and customer-continuity channels", () => {
+    const allocation = allocate(buildRequest({ objective: "CUSTOMER_RETENTION" }));
+
+    expect(allocation.objectiveFunnelStrategy.funnelStage).toBe("RETENTION");
+    expect(allocation.channelAllocations.map((entry) => [entry.channel, entry.priority, entry.allocationPercentage])).toEqual([
+      ["EMAIL", "PRIMARY", 50],
+      ["SHOPIFY_ONSITE", "PRIMARY", 40],
+      ["INSTAGRAM", "SUPPORTING", 10],
+    ]);
+  });
+
+  it("keeps channel allocation percentages exactly at 100", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(percentageTotal(allocation.channelAllocations.map((entry) => entry.allocationPercentage))).toBe(100);
+  });
+
+  it("preserves requested total budget across monetary allocations", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }), { totalBudget: 1000.01, currency: "usd" });
+
+    expect(allocation.totalBudget).toBe(1000.01);
+    expect(allocation.currency).toBe("USD");
+    expect(amountTotal(allocation.channelAllocations.map((entry) => entry.allocationAmount ?? 0))).toBe(1000.01);
+  });
+
+  it("rounds monetary allocation deterministically", () => {
+    const allocation = allocate(
+      buildRequest({
+        objective: "BRAND_AWARENESS",
+        audience: { ...buildRequest().audience, awarenessLevel: "UNAWARE", objections: [], buyingTriggers: [] },
+        offer: { type: "STANDARD", headline: "Meet the daily styling helper", terms: [] },
+      }),
+      { totalBudget: 100, currency: "MYR" },
+    );
+
+    expect(allocation.channelAllocations.map((entry) => entry.allocationAmount)).toEqual([42.86, 42.86, 14.28]);
+  });
+
+  it("uses percentage-only allocation when budget is absent", () => {
+    const allocation = allocate();
+
+    expect(allocation.totalBudget).toBeUndefined();
+    expect(allocation.currency).toBeUndefined();
+    expect(allocation.channelAllocations.every((entry) => entry.allocationAmount === undefined)).toBe(true);
+  });
+
+  it("handles zero budget explicitly and safely", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }), { totalBudget: 0, currency: "USD" });
+
+    expect(allocation.totalBudget).toBe(0);
+    expect(allocation.channelAllocations.map((entry) => entry.allocationAmount)).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("rejects negative, NaN, and Infinity budget values", () => {
+    const engine = new BudgetChannelCreativeAllocationEngine();
+
+    expect(() => engine.allocateStrategy(buildRequest(), { totalBudget: -1 })).toThrow(InvalidCampaignRequestError);
+    expect(() => engine.allocateStrategy(buildRequest(), { totalBudget: Number.NaN })).toThrow(InvalidCampaignRequestError);
+    expect(() => engine.allocateStrategy(buildRequest(), { totalBudget: Number.POSITIVE_INFINITY })).toThrow(InvalidCampaignRequestError);
+  });
+
+  it("keeps channel-role priority behavior deterministic", () => {
+    const allocation = allocate(buildRequest({ objective: "RETARGETING" }));
+
+    expect(allocation.channelAllocations.map((entry) => [entry.channel, entry.priority])).toEqual([
+      ["FACEBOOK", "RETARGETING"],
+      ["INSTAGRAM", "RETARGETING"],
+      ["EMAIL", "SUPPORTING"],
+      ["SHOPIFY_ONSITE", "SUPPORTING"],
+    ]);
+    expect(BUDGET_ALLOCATION_PRIORITIES).toEqual(["PRIMARY", "SUPPORTING", "TEST", "RETARGETING"]);
+  });
+
+  it("keeps creative mix percentages exactly at 100", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(percentageTotal(allocation.creativeMix.map((entry) => entry.recommendedPercentage))).toBe(100);
+  });
+
+  it("aligns creative mix to objective and funnel strategy without generating assets", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(allocation.creativeMix.map((entry) => [entry.creativeRole, entry.objectiveAlignment, entry.funnelAlignment])).toEqual([
+      ["OFFER", "CONVERSION", "BOFU"],
+      ["PRODUCT_DEMONSTRATION", "CONVERSION", "BOFU"],
+      ["SOCIAL_PROOF", "CONVERSION", "BOFU"],
+      ["RETARGETING", "CONVERSION", "BOFU"],
+    ]);
+    expect(CREATIVE_ALLOCATION_ROLES).toContain("RETARGETING");
+  });
+
+  it("keeps allocation output deterministic for repeated inputs", () => {
+    const engine = new BudgetChannelCreativeAllocationEngine();
+    const request = buildRequest({ objective: "CONVERSION" });
+
+    expect(engine.allocateStrategy(request, { totalBudget: 333.33, currency: "USD" })).toEqual(engine.allocateStrategy(request, { totalBudget: 333.33, currency: "USD" }));
+  });
+
+  it("preserves canonical identity and composed A-C strategy context", () => {
+    const request = buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] });
+    const sourceStrategy = new AiCampaignStrategyService().createStrategy(request);
+    const allocation = allocate(request, { totalBudget: 500, currency: "USD" });
+
+    expect(allocation.campaignStrategyId).toBe(sourceStrategy.id);
+    expect(allocation.product).toEqual(sourceStrategy.product);
+    expect(allocation.objectiveFunnelStrategy.campaignStrategyId).toBe(sourceStrategy.id);
+    expect(allocation.audienceMarketStrategy.campaignStrategyId).toBe(sourceStrategy.id);
+  });
+
+  it("preserves market and channel associations", () => {
+    const allocation = allocate(buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] }));
+
+    expect(allocation.channels).toEqual(["EMAIL", "TIKTOK"]);
+    expect(allocation.markets.map((market) => market.market)).toEqual(["US", "MY"]);
+  });
+
+  it("returns advisory allocation metadata", () => {
+    const allocation = allocate();
+
+    expect(allocation.advisoryOnly).toBe(true);
+    expect(allocation.metadata).toEqual({
+      strategyVersion: BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
+      sourceStrategyVersion: "SACP-04.04A",
+      objectiveFunnelStrategyVersion: CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+      audienceMarketStrategyVersion: AUDIENCE_MARKET_STRATEGY_VERSION,
+      roundingRule: "BASIS_POINTS_THEN_CENTS_LARGEST_REMAINDER",
+    });
+  });
+
+  it("exports the public budget, channel, and creative allocation API", () => {
+    expect(publicExports.BudgetChannelCreativeAllocationEngine).toBe(BudgetChannelCreativeAllocationEngine);
+    expect(publicExports.BUDGET_ALLOCATION_PRIORITIES).toEqual(BUDGET_ALLOCATION_PRIORITIES);
+    expect(publicExports.CREATIVE_ALLOCATION_ROLES).toEqual(CREATIVE_ALLOCATION_ROLES);
+    expect(publicExports.BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION).toBe(BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION);
   });
 });
 
