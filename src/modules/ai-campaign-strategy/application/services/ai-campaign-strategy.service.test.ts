@@ -8,6 +8,13 @@ import {
   BudgetChannelCreativeAllocationEngine,
   BUDGET_ALLOCATION_PRIORITIES,
   BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
+  CampaignStrategyRecommendationRiskEngine,
+  CAMPAIGN_STRATEGY_READINESS_STATUSES,
+  CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES,
+  CAMPAIGN_STRATEGY_RECOMMENDATION_PRIORITIES,
+  CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION,
+  CAMPAIGN_STRATEGY_RISK_CATEGORIES,
+  CAMPAIGN_STRATEGY_RISK_SEVERITIES,
   CampaignObjectiveFunnelStrategyEngine,
   CAMPAIGN_INTENT_LEVELS,
   CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
@@ -27,6 +34,7 @@ import {
   type AudienceMarketStrategy,
   type BudgetChannelCreativeAllocation,
   type CampaignObjectiveFunnelStrategy,
+  type CampaignStrategyRecommendationRiskResult,
 } from "../../index.js";
 import * as publicExports from "../../../ai-campaign-strategy/index.js";
 
@@ -902,6 +910,318 @@ describe("BudgetChannelCreativeAllocationEngine", () => {
     expect(publicExports.BUDGET_ALLOCATION_PRIORITIES).toEqual(BUDGET_ALLOCATION_PRIORITIES);
     expect(publicExports.CREATIVE_ALLOCATION_ROLES).toEqual(CREATIVE_ALLOCATION_ROLES);
     expect(publicExports.BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION).toBe(BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION);
+  });
+});
+
+describe("CampaignStrategyRecommendationRiskEngine", () => {
+  const engine = new CampaignStrategyRecommendationRiskEngine();
+  const allocationEngine = new BudgetChannelCreativeAllocationEngine();
+  const evaluate = (request: CreateCampaignStrategyRequest = buildRequest()): CampaignStrategyRecommendationRiskResult => engine.evaluateStrategy(request);
+  const allocate = (request: CreateCampaignStrategyRequest = buildRequest()): BudgetChannelCreativeAllocation => allocationEngine.allocateStrategy(request);
+  const buildAwarenessRequest = (): CreateCampaignStrategyRequest =>
+    buildRequest({
+      objective: "BRAND_AWARENESS",
+      audience: { ...buildRequest().audience, awarenessLevel: "UNAWARE", objections: [], buyingTriggers: [] },
+      offer: { type: "STANDARD", headline: "Meet the daily styling helper", terms: [] },
+    });
+  const withAllocation = (
+    allocation: BudgetChannelCreativeAllocation,
+    overrides: Partial<BudgetChannelCreativeAllocation>,
+  ): BudgetChannelCreativeAllocation => ({
+    ...allocation,
+    ...overrides,
+  });
+
+  it("marks a coherent low-risk strategy as READY", () => {
+    const result = evaluate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.readiness.status).toBe("READY");
+    expect(result.readiness.requiresHumanReview).toBe(false);
+    expect(result.riskFindings).toEqual([]);
+    expect(result.recommendations).toEqual([]);
+  });
+
+  it("detects objective and funnel mismatches", () => {
+    const allocation = allocate(buildAwarenessRequest());
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        objectiveFunnelStrategy: {
+          ...allocation.objectiveFunnelStrategy,
+          selectedObjective: "CONVERSION",
+        },
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("OBJECTIVE_FUNNEL_MISMATCH");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("OBJECTIVE_ALIGNMENT");
+  });
+
+  it("detects audience and funnel mismatches", () => {
+    const allocation = allocate(buildAwarenessRequest());
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        audienceMarketStrategy: {
+          ...allocation.audienceMarketStrategy,
+          audienceSegment: "HIGH_INTENT_BUYER",
+        },
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("AUDIENCE_FUNNEL_MISMATCH");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("AUDIENCE_ALIGNMENT");
+  });
+
+  it("detects insufficient market evidence", () => {
+    const result = evaluate(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("MARKET_EVIDENCE_INSUFFICIENT");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("MARKET_ALIGNMENT");
+  });
+
+  it("detects channel concentration risk", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        channelAllocations: allocation.channelAllocations.map((channel, index) => ({
+          ...channel,
+          allocationPercentage: index === 0 ? 80 : 5,
+        })),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("CHANNEL_CONCENTRATION");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("CHANNEL_ALLOCATION");
+  });
+
+  it("detects channel role mismatches", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        channelAllocations: allocation.channelAllocations.map((channel) => (channel.channel === "EMAIL" ? { ...channel, priority: "PRIMARY" } : channel)),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("CHANNEL_ROLE_MISMATCH");
+  });
+
+  it("detects fragmented budget allocation", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const percentages = [50, 12.5, 12.5, 12.5, 12.5];
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        channelAllocations: allocation.channelAllocations.map((channel, index) => ({
+          ...channel,
+          allocationPercentage: percentages[index] ?? channel.allocationPercentage,
+        })),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("BUDGET_TOO_FRAGMENTED");
+  });
+
+  it("detects budget allocation imbalance", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const percentages = [70, 10, 10, 5, 5];
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        channelAllocations: allocation.channelAllocations.map((channel, index) => ({
+          ...channel,
+          allocationPercentage: percentages[index] ?? channel.allocationPercentage,
+        })),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("BUDGET_ALLOCATION_IMBALANCE");
+  });
+
+  it("detects creative mix mismatches", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        creativeMix: allocation.creativeMix.filter((creative) => creative.creativeRole !== "RETARGETING"),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("CREATIVE_MIX_MISMATCH");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("CREATIVE_MIX");
+  });
+
+  it("recommends retargeting review when BOFU support is missing", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        channelAllocations: allocation.channelAllocations.filter((channel) => channel.channel !== "RETARGETING"),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("RETARGETING_GAP");
+    expect(result.recommendations.map((recommendation) => recommendation.code)).toContain("REC_RETARGETING_REVIEW_BOFU");
+  });
+
+  it("detects retention support gaps", () => {
+    const allocation = allocate(buildRequest({ objective: "CUSTOMER_RETENTION" }));
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        creativeMix: allocation.creativeMix.filter((creative) => creative.creativeRole !== "RETENTION"),
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category)).toContain("RETENTION_GAP");
+    expect(result.recommendations.map((recommendation) => recommendation.category)).toContain("RETENTION_STRATEGY");
+  });
+
+  it("requires human review for HIGH risks", () => {
+    const allocation = allocate(buildAwarenessRequest());
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        audienceMarketStrategy: {
+          ...allocation.audienceMarketStrategy,
+          audienceSegment: "HIGH_INTENT_BUYER",
+        },
+      }),
+    );
+
+    expect(result.riskFindings.some((finding) => finding.severity === "HIGH")).toBe(true);
+    expect(result.readiness.requiresHumanReview).toBe(true);
+  });
+
+  it("marks CRITICAL risk as NOT_READY", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation({
+      ...allocation,
+      objectiveFunnelStrategy: {
+        ...allocation.objectiveFunnelStrategy,
+        campaignStrategyId: "ai-campaign-strategy:mismatched",
+      },
+    });
+
+    expect(result.riskFindings.map((finding) => finding.severity)).toContain("CRITICAL");
+    expect(result.readiness.status).toBe("NOT_READY");
+  });
+
+  it("uses READY_WITH_REVIEW for medium and high advisory risks", () => {
+    const result = evaluate(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+
+    expect(result.readiness.status).toBe("READY_WITH_REVIEW");
+    expect(CAMPAIGN_STRATEGY_READINESS_STATUSES).toEqual(["READY", "READY_WITH_REVIEW", "NOT_READY"]);
+  });
+
+  it("does not create unnecessary recommendations for coherent strategy", () => {
+    const result = evaluate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.recommendations).toHaveLength(0);
+  });
+
+  it("deduplicates repeated risk codes deterministically", () => {
+    const allocation = allocate(
+      buildRequest({
+        product: { ...buildRequest().product, markets: ["US"] },
+        audience: { ...buildRequest().audience, targetMarkets: ["MY"] },
+      }),
+    );
+    const duplicatedMarket = allocation.markets.find((market) => market.market === "MY");
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        markets: duplicatedMarket === undefined ? allocation.markets : [...allocation.markets, duplicatedMarket],
+      }),
+    );
+
+    const codes = result.riskFindings.map((finding) => finding.code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  it("orders risks and recommendations deterministically", () => {
+    const allocation = allocate(buildAwarenessRequest());
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        objectiveFunnelStrategy: {
+          ...allocation.objectiveFunnelStrategy,
+          selectedObjective: "CONVERSION",
+        },
+        audienceMarketStrategy: {
+          ...allocation.audienceMarketStrategy,
+          audienceSegment: "HIGH_INTENT_BUYER",
+        },
+      }),
+    );
+
+    expect(result.riskFindings.map((finding) => finding.category).slice(0, 2)).toEqual([
+      "OBJECTIVE_FUNNEL_MISMATCH",
+      "AUDIENCE_FUNNEL_MISMATCH",
+    ]);
+    expect(result.recommendations.map((recommendation) => recommendation.code)).toEqual([...result.recommendations.map((recommendation) => recommendation.code)]);
+  });
+
+  it("keeps repeated equivalent output deterministic", () => {
+    const request = buildRequest({ objective: "CONVERSION" });
+
+    expect(engine.evaluateStrategy(request)).toEqual(engine.evaluateStrategy(request));
+  });
+
+  it("maps priorities from risk severity", () => {
+    const allocation = allocate(buildAwarenessRequest());
+    const result = engine.evaluateFromAllocation(
+      withAllocation(allocation, {
+        audienceMarketStrategy: {
+          ...allocation.audienceMarketStrategy,
+          audienceSegment: "HIGH_INTENT_BUYER",
+        },
+      }),
+    );
+
+    expect(result.recommendations[0]?.priority).toBe(result.riskFindings[0]?.severity);
+    expect(CAMPAIGN_STRATEGY_RECOMMENDATION_PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+    expect(CAMPAIGN_STRATEGY_RISK_SEVERITIES).toEqual(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+  });
+
+  it("preserves canonical identity", () => {
+    const allocation = allocate(buildRequest({ objective: "CONVERSION" }));
+    const result = engine.evaluateFromAllocation(allocation);
+
+    expect(result.campaignStrategyId).toBe(allocation.campaignStrategyId);
+    expect(result.objectiveFunnelStrategy.campaignStrategyId).toBe(allocation.campaignStrategyId);
+    expect(result.audienceMarketStrategy.campaignStrategyId).toBe(allocation.campaignStrategyId);
+  });
+
+  it("preserves A-D associations", () => {
+    const allocation = allocate(buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] }));
+    const result = engine.evaluateFromAllocation(allocation);
+
+    expect(result.product).toEqual(allocation.product);
+    expect(result.channels).toEqual(["EMAIL", "TIKTOK"]);
+    expect(result.markets.map((market) => market.market)).toEqual(["US", "MY"]);
+    expect(result.budgetChannelCreativeAllocation).toEqual(allocation);
+  });
+
+  it("returns advisory metadata", () => {
+    const result = evaluate(buildRequest({ objective: "CONVERSION" }));
+
+    expect(result.advisoryOnly).toBe(true);
+    expect(result.readiness.advisoryOnly).toBe(true);
+    expect(result.metadata).toEqual({
+      strategyVersion: CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION,
+      allocationStrategyVersion: BUDGET_CHANNEL_CREATIVE_ALLOCATION_VERSION,
+      objectiveFunnelStrategyVersion: CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+      audienceMarketStrategyVersion: AUDIENCE_MARKET_STRATEGY_VERSION,
+      orderingRule: "RISK_ORDER_THEN_RECOMMENDATION_ORDER_BY_STABLE_CODE",
+    });
+  });
+
+  it("exports the public recommendation and risk API", () => {
+    expect(publicExports.CampaignStrategyRecommendationRiskEngine).toBe(CampaignStrategyRecommendationRiskEngine);
+    expect(publicExports.CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION).toBe(CAMPAIGN_STRATEGY_RECOMMENDATION_RISK_VERSION);
+    expect(publicExports.CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES).toEqual(CAMPAIGN_STRATEGY_RECOMMENDATION_CATEGORIES);
+    expect(publicExports.CAMPAIGN_STRATEGY_RISK_CATEGORIES).toEqual(CAMPAIGN_STRATEGY_RISK_CATEGORIES);
   });
 });
 
