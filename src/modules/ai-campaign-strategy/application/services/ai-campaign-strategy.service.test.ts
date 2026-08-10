@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   AiCampaignStrategyService,
+  CampaignObjectiveFunnelStrategyEngine,
+  CAMPAIGN_INTENT_LEVELS,
+  CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+  CAMPAIGN_STRATEGIC_FUNNEL_STAGES,
+  CAMPAIGN_STRATEGIC_OBJECTIVES,
   InMemoryCampaignStrategyRepository,
   InvalidAudienceError,
   InvalidOfferError,
@@ -11,6 +16,7 @@ import {
   UnsupportedChannelError,
   UnsupportedObjectiveError,
   type CreateCampaignStrategyRequest,
+  type CampaignObjectiveFunnelStrategy,
 } from "../../index.js";
 import * as publicExports from "../../../ai-campaign-strategy/index.js";
 
@@ -348,6 +354,187 @@ describe("AiCampaignStrategyService", () => {
 
   it("rejects invalid createdAt timestamps", () => {
     expect(() => createStrategy(buildRequest({ createdAt: "2026-08-02" }))).toThrow(InvalidTimestampError);
+  });
+});
+
+describe("CampaignObjectiveFunnelStrategyEngine", () => {
+  const determine = (request: CreateCampaignStrategyRequest = buildRequest()): CampaignObjectiveFunnelStrategy =>
+    new CampaignObjectiveFunnelStrategyEngine().determineStrategy(request);
+
+  it("selects awareness objective and TOFU for discovery-oriented input", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "BRAND_AWARENESS",
+        audience: {
+          ...buildRequest().audience,
+          awarenessLevel: "UNAWARE",
+          objections: [],
+          buyingTriggers: ["Category discovery"],
+        },
+        offer: {
+          type: "STANDARD",
+          headline: "Meet the daily styling helper",
+          terms: [],
+        },
+      }),
+    );
+
+    expect(strategy.selectedObjective).toBe("AWARENESS");
+    expect(strategy.funnelStage).toBe("TOFU");
+    expect(strategy.intentLevel).toBe("LOW");
+    expect(strategy.supportingSignals.map((signal) => signal.code)).toEqual(["AWARENESS_OBJECTIVE", "AWARENESS_LEVEL_LOW", "AWARENESS_INTERESTS"]);
+  });
+
+  it("selects engagement objective and MOFU for consideration input", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "TRAFFIC",
+        preferredAngles: ["EDUCATION", "COMPARISON"],
+        audience: {
+          ...buildRequest().audience,
+          awarenessLevel: "SOLUTION_AWARE",
+          buyingTriggers: ["Compare options"],
+        },
+        offer: {
+          type: "STANDARD",
+          headline: "Compare the daily routine fit",
+          terms: [],
+        },
+      }),
+    );
+
+    expect(strategy.selectedObjective).toBe("ENGAGEMENT");
+    expect(strategy.funnelStage).toBe("MOFU");
+    expect(strategy.intentLevel).toBe("MEDIUM");
+    expect(strategy.supportingSignals.map((signal) => signal.code)).toContain("CONSIDERATION_MESSAGING_ANGLE");
+  });
+
+  it("selects conversion objective and BOFU for purchase-intent input", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "CONVERSION",
+        audience: {
+          ...buildRequest().audience,
+          awarenessLevel: "MOST_AWARE",
+          buyingTriggers: ["Ready to checkout"],
+        },
+        offer: {
+          type: "PERCENTAGE_DISCOUNT",
+          headline: "Save today",
+          discountPercentage: 15,
+          terms: ["Merchant approval required"],
+        },
+      }),
+    );
+
+    expect(strategy.selectedObjective).toBe("CONVERSION");
+    expect(strategy.funnelStage).toBe("BOFU");
+    expect(strategy.intentLevel).toBe("HIGH");
+    expect(strategy.recommendedCtaDirection).toContain("purchase");
+  });
+
+  it("selects retention for existing-customer or repeat-purchase input", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "CUSTOMER_RETENTION",
+        audience: {
+          ...buildRequest().audience,
+          buyingTriggers: ["Repeat order reminder"],
+        },
+      }),
+    );
+
+    expect(strategy.selectedObjective).toBe("RETENTION");
+    expect(strategy.funnelStage).toBe("RETENTION");
+    expect(strategy.intentLevel).toBe("HIGH");
+    expect(strategy.recommendedCampaignFocus).toContain("repeat-purchase");
+  });
+
+  it("maps intent levels from funnel stage and awareness context", () => {
+    const awareness = determine(
+      buildRequest({
+        objective: "BRAND_AWARENESS",
+        audience: { ...buildRequest().audience, awarenessLevel: "PROBLEM_AWARE", objections: [], buyingTriggers: [] },
+        offer: { type: "STANDARD", headline: "Discover easier styling", terms: [] },
+      }),
+    );
+    const consideration = determine(
+      buildRequest({
+        objective: "LEAD_GENERATION",
+        audience: { ...buildRequest().audience, buyingTriggers: ["Download routine guide"] },
+        offer: { type: "STANDARD", headline: "Join the routine guide", terms: [] },
+      }),
+    );
+    const conversion = determine(buildRequest({ objective: "CONVERSION" }));
+
+    expect(awareness.intentLevel).toBe("LOW");
+    expect(consideration.intentLevel).toBe("MEDIUM");
+    expect(conversion.intentLevel).toBe("HIGH");
+    expect(CAMPAIGN_INTENT_LEVELS).toEqual(["LOW", "MEDIUM", "HIGH"]);
+  });
+
+  it("uses deterministic precedence when signals conflict", () => {
+    const strategy = determine(
+      buildRequest({
+        objective: "CUSTOMER_RETENTION",
+        audience: {
+          ...buildRequest().audience,
+          awarenessLevel: "MOST_AWARE",
+          buyingTriggers: ["Ready to checkout", "Repeat order reminder"],
+        },
+        offer: {
+          type: "LIMITED_TIME",
+          headline: "Come back today",
+          expiresAt: "2026-08-09T04:00:00.000Z",
+          terms: [],
+        },
+      }),
+    );
+
+    expect(strategy.selectedObjective).toBe("RETENTION");
+    expect(strategy.metadata.precedenceRule).toBe("RETENTION_THEN_CONVERSION_THEN_CONSIDERATION_THEN_AWARENESS");
+    expect(strategy.reasoning[0]).toBe("Selected RETENTION because it is the highest-precedence matching signal group.");
+  });
+
+  it("keeps repeated output deterministic", () => {
+    const engine = new CampaignObjectiveFunnelStrategyEngine();
+    const request = buildRequest({ objective: "LEAD_GENERATION" });
+
+    expect(engine.determineStrategy(request)).toEqual(engine.determineStrategy(request));
+  });
+
+  it("preserves canonical strategy identity and product, market, and channel associations", () => {
+    const engine = new CampaignObjectiveFunnelStrategyEngine();
+    const request = buildRequest({ objective: "TRAFFIC", preferredChannels: ["EMAIL", "TIKTOK"] });
+    const sourceStrategy = new AiCampaignStrategyService().createStrategy(request);
+    const strategy = engine.determineStrategy(request);
+
+    expect(strategy.campaignStrategyId).toBe(sourceStrategy.id);
+    expect(strategy.product).toEqual(sourceStrategy.product);
+    expect(strategy.channels).toEqual(["EMAIL", "TIKTOK"]);
+    expect(strategy.markets).toEqual(["US", "MY"]);
+  });
+
+  it("returns advisory strategy and version metadata", () => {
+    const strategy = determine();
+
+    expect(strategy.advisoryOnly).toBe(true);
+    expect(strategy.metadata).toEqual({
+      strategyVersion: CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION,
+      sourceStrategyVersion: "SACP-04.04A",
+      precedenceRule: "RETENTION_THEN_CONVERSION_THEN_CONSIDERATION_THEN_AWARENESS",
+    });
+  });
+
+  it("rejects invalid input through existing strategy validation", () => {
+    expect(() => determine(buildRequest({ objective: "NOT_REAL" as CreateCampaignStrategyRequest["objective"] }))).toThrow(UnsupportedObjectiveError);
+  });
+
+  it("exports the public objective and funnel strategy API", () => {
+    expect(publicExports.CampaignObjectiveFunnelStrategyEngine).toBe(CampaignObjectiveFunnelStrategyEngine);
+    expect(publicExports.CAMPAIGN_STRATEGIC_OBJECTIVES).toEqual(CAMPAIGN_STRATEGIC_OBJECTIVES);
+    expect(publicExports.CAMPAIGN_STRATEGIC_FUNNEL_STAGES).toEqual(CAMPAIGN_STRATEGIC_FUNNEL_STAGES);
+    expect(publicExports.CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION).toBe(CAMPAIGN_OBJECTIVE_FUNNEL_STRATEGY_VERSION);
   });
 });
 
