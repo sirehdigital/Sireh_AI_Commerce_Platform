@@ -1,3 +1,19 @@
+# SUPERSEDED / HISTORICAL ROADMAP
+
+This document is preserved as historical planning context.
+
+- Recorded on 6 August 2026.
+- It originally proposed `SACP-04.04A` for Meta Ads Read-Only Intelligence.
+- That proposed identifier was superseded before implementation.
+- Published repository history assigns `SACP-04.04A` to AI Campaign Strategy Foundation.
+- `SACP-04.04A-F` is now completed as the AI Campaign Strategy Engine.
+- Meta Ads Read-Only Intelligence has moved to planned Phase 05.
+- Canonical roadmap: `docs/roadmap/SACP-MASTER-ROADMAP-PHASE-04-10.md`
+
+The original historical content is preserved below.
+
+---
+
 # SACP-04.04 — AI Marketing Intelligence Engine
 
 **Organization:** Sireh Digital  
