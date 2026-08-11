@@ -1,3 +1,4 @@
+export * from "./diana-paid-media.model.js";
 export * from "./luna-lyla-specialist.model.js";
 export * from "./maya-aria-specialist.model.js";
 export * from "./miss-hermes-director.model.js";
